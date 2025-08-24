@@ -10,6 +10,27 @@ import subprocess
 import tempfile
 from pathlib import Path
 from dotenv import load_dotenv
+import io
+from PIL import Image, ImageDraw, ImageFont
+import textwrap
+from datetime import datetime
+
+# 선택 의존성 (HTML -> PNG 변환용)
+HTML2IMAGE_AVAILABLE = False
+try:
+    from html2image import Html2Image  
+    HTML2IMAGE_AVAILABLE = True
+except Exception:
+    HTML2IMAGE_AVAILABLE = False
+
+# 선택 의존성 (Markdown -> HTML 변환)
+MARKDOWN_AVAILABLE = False
+try:
+    import markdown2  # pip install markdown2
+    MARKDOWN_AVAILABLE = True
+except Exception:
+    MARKDOWN_AVAILABLE = False
+
 
 # 환경 변수
 try:
@@ -22,11 +43,11 @@ except:
     GOOGLE_API_KEY = None
     UPSTAGE_API_KEY = None
 
-# API
+# API 엔드포인트
 TTS_API_URL = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={GOOGLE_API_KEY}" if GOOGLE_API_KEY else None
 DEEPL_API_URL = "https://api-free.deepl.com/v2/translate"
 
-# Upstage Chat API 
+# Upstage Chat API 설정
 try:
     from langchain_upstage import ChatUpstage, UpstageDocumentParseLoader
     from langchain_core.prompts import ChatPromptTemplate
@@ -35,161 +56,351 @@ try:
 except ImportError:
     UPSTAGE_AVAILABLE = False
 
-# 🌍 번역 함수 
-def deepl_translate_text(text, target_lang):
-    """DeepL API를 사용한 텍스트 번역"""
-    if not DEEPL_API_KEY:
-        # API 키가 없으면 간단한 메시지 반환
-        lang_names = {
-            "EN": "영어", "JA": "일본어", "ZH": "중국어", 
-            "UK": "우크라이나어", "VI": "베트남어"
-        }
-        return f"[{lang_names.get(target_lang, target_lang)} 번역 기능]\n\nDeepL API 키가 설정되지 않아 실제 번역은 불가능합니다.\n\n원본 텍스트:\n{text[:500]}..."
-        
-    try:
-        headers = {"Authorization": f"DeepL-Auth-Key {DEEPL_API_KEY}"}
-        data = {"text": [text], "target_lang": target_lang}
-        response = requests.post(DEEPL_API_URL, headers=headers, json=data, timeout=30)
-        response.raise_for_status()
-        
-        return response.json()["translations"][0]["text"]
-    except Exception as e:
-        return f"번역 오류: {e}\n\n원본 텍스트:\n{text[:500]}..."
+# 🎨 이미지 생성을 위한 색상 및 폰트 설정 (PIL 폴백용)
+COLORS = {
+    'bg': '#f0f2f6',
+    'white': '#ffffff',
+    'primary': '#00C278',
+    'success': '#4CAF50',
+    'warning': '#FF9800',
+    'danger': '#f44336',
+    'text': '#31333F',
+    'muted': '#6b7280',
+    'border': '#e5e7eb',
+    'accent': '#667eea'
+}
 
-# 🔊 TTS 함수 
-def split_text_for_tts(text, max_bytes=4500):
-    """긴 텍스트를 Google TTS 5000바이트 제한에 맞게 안전하게 분할"""
-    if len(text.encode('utf-8')) <= max_bytes:
-        return [text]
-    
-    chunks = []
-    current_chunk = ""
-    
-    # 문장 단위로 분할
-    sentences = re.split(r'(?<=[.!?다])\s+', text)
-    
-    for sentence in sentences:
-        test_chunk = current_chunk + sentence + " "
-        
-        if len(test_chunk.encode('utf-8')) <= max_bytes:
-            current_chunk = test_chunk
-        else:
-            if current_chunk.strip():
-                chunks.append(current_chunk.strip())
-            
-            # 단일 문장이 너무 긴 경우 강제로 자르기
-            if len(sentence.encode('utf-8')) > max_bytes:
-                words = sentence.split()
-                temp_chunk = ""
-                
-                for word in words:
-                    test_word_chunk = temp_chunk + word + " "
-                    if len(test_word_chunk.encode('utf-8')) <= max_bytes:
-                        temp_chunk = test_word_chunk
-                    else:
-                        if temp_chunk.strip():
-                            chunks.append(temp_chunk.strip())
-                        temp_chunk = word + " "
-                
-                current_chunk = temp_chunk
-            else:
-                current_chunk = sentence + " "
-    
-    if current_chunk.strip():
-        chunks.append(current_chunk.strip())
-    
-    return chunks
 
-def google_text_to_speech(text, lang_code="KO"):
-    """Google TTS API로 음성 파일 생성 (긴 텍스트 자동 분할 처리)"""
-    if not GOOGLE_API_KEY:
-        return None, "Google API 키가 설정되지 않아 음성 생성이 불가능합니다."
-    
-    # 특수문자 제거
-    text = re.sub(r"[^\w\s가-힣]", "", text)
-    
-    # 텍스트 길이 체크 및 분할
-    text_chunks = split_text_for_tts(text)
-    
-    # 음성 설정
-    voice_map = {
-        "KO": {"languageCode": "ko-KR", "name": "ko-KR-Wavenet-A"},
-        "EN": {"languageCode": "en-US", "name": "en-US-Wavenet-F"},
-        "JA": {"languageCode": "ja-JP", "name": "ja-JP-Wavenet-A"},
-        "ZH": {"languageCode": "cmn-CN", "name": "cmn-CN-Wavenet-A"},
+# 공용: 캡처용 <head> 스니펫 (웹폰트+메타+다크모드 변수)
+EMBED_HEAD = """
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- 가독성과 한글 안정성을 위한 Noto Sans KR -->
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --card-bg: #ffffff;
+    --bg: #f7f8fa;
+    --border: #e5e7eb;
+    --text: #1f2937;
+    --text-weak: #4b5563;
+    --muted: #6b7280;
+    --primary: #00C278;
+    --primary-dark: #00a366;
+    --accent: #667eea;
+    --shadow: rgba(0,0,0,.08);
+    --badge-bg: #eef2ff;
+    --badge-text: #3730a3;
+    --badge-border: #c7d2fe;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --card-bg: #111827;
+      --bg: #0b0f16;
+      --border: #1f2937;
+      --text: #e5e7eb;
+      --text-weak: #cbd5e1;
+      --muted: #9ca3af;
+      --primary: #2dd4bf;
+      --primary-dark: #0ea5a3;
+      --accent: #8b9cf7;
+      --shadow: rgba(0,0,0,.35);
+      --badge-bg: #1f2937;
+      --badge-text: #c7d2fe;
+      --badge-border: #374151;
     }
+  }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Malgun Gothic', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    line-height: 1.7;
+  }
+</style>
+"""
+
+# CSS utils
+DEFAULT_EMBED_CSS = """
+.report-wrap { max-width: 980px; margin: 0 auto; padding: 32px; }
+.report-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 20px; overflow: hidden; box-shadow: 0 10px 35px var(--shadow); }
+.report-header { background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%); padding: 32px; color: #fff; }
+.report-header h1 { margin: 0 0 8px 0; font-size: 26px; font-weight: 700; }
+.report-header .meta { font-size: 14px; opacity: .9; }
+.report-section { padding: 28px 32px; border-top: 1px solid var(--border); }
+.report-section:last-child { border-bottom: none; }
+.report-section h2 { margin: 0 0 16px 0; font-size: 20px; font-weight: 700; color: var(--text); padding-bottom: 8px; border-bottom: 2px solid var(--primary); display: inline-block;}
+.alerts { display: grid; gap: 12px; }
+.alert { padding: 14px 18px; border-radius: 12px; border: 1px solid transparent; display: flex; align-items: center; gap: 10px; }
+.alert::before { font-size: 20px; }
+.alert.critical { border-color:#fecaca; background:#fff1f2; color:#b91c1c; }
+.alert.critical::before { content: '🚨'; }
+.alert.warn { border-color:#fde68a; background:#fffbeb; color: #b45309; }
+.alert.warn::before { content: '⚠️'; }
+.alert.ok { border-color:#bbf7d0; background:#f0fdf4; color: #15803d; }
+.alert.ok::before { content: '✅'; }
+@media (prefers-color-scheme: dark) {
+  .alert.critical { background:#2d1516; border-color:#7f1d1d; color:#fca5a5; }
+  .alert.warn { background:#2d230d; border-color:#7c5800; color:#fde047; }
+  .alert.ok { background:#112a1a; border-color:#14532d; color:#86efac; }
+}
+.grade { display:inline-block; padding: 8px 14px; border-radius:999px; border:1px solid rgba(255,255,255,.5); font-weight:700; background: rgba(255,255,255,.2); backdrop-filter: blur(5px); }
+.footer-note { color: var(--muted); font-size: 13px; text-align:center; padding: 24px; background: var(--bg); }
+.badge { display:inline-block; padding:4px 10px; border-radius: 8px; background: var(--badge-bg); color: var(--badge-text); border:1px solid var(--badge-border); font-size:13px; font-weight: 500;}
+.report-section p { margin: 0 0 12px 0; color: var(--text-weak); }
+.report-section li { margin-bottom: 8px; color: var(--text-weak); }
+.report-section a { color: var(--accent); text-decoration: none; font-weight: 500; }
+.report-section a:hover { text-decoration: underline; }
+.report-section strong { font-weight: 700; color: var(--text); }
+
+/* 번역 결과 전용 스타일 추가 */
+.translation-content {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    margin: 8px 0;
+    box-shadow: 0 4px 20px var(--shadow);
+    line-height: 1.7;
+}
+.translation-content h1, .translation-content h2, .translation-content h3 {
+    color: var(--primary);
+    margin-top: 24px;
+    margin-bottom: 16px;
+}
+.translation-content h1 {
+    font-size: 24px;
+    font-weight: 700;
+    border-bottom: 2px solid var(--primary);
+    padding-bottom: 8px;
+}
+.translation-content h2 {
+    font-size: 20px;
+    font-weight: 600;
+}
+.translation-content h3 {
+    font-size: 18px;
+    font-weight: 500;
+}
+.translation-content p {
+    margin-bottom: 12px;
+    color: var(--text-weak);
+}
+.translation-content ul, .translation-content ol {
+    margin: 16px 0;
+    padding-left: 24px;
+}
+.translation-content li {
+    margin-bottom: 8px;
+    color: var(--text-weak);
+}
+.translation-content strong {
+    color: var(--text);
+    font-weight: 600;
+}
+.translation-content blockquote {
+    border-left: 4px solid var(--primary);
+    padding-left: 16px;
+    margin: 16px 0;
+    font-style: italic;
+    color: var(--muted);
+}
+.translation-content code {
+    background: var(--badge-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.9em;
+}
+"""
+
+def load_style_css():
+    for p in ["style.css", "./style.css", str(Path(__file__).parent / "style.css")]:
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    return f.read()
+            except:
+                pass
+    return DEFAULT_EMBED_CSS
+
+EMBED_CSS = load_style_css()
+
+
+def md_to_html(md_text: str) -> str:
+    if not md_text:
+        return ""
+    if MARKDOWN_AVAILABLE:
+        return markdown2.markdown(md_text, extras=["fenced-code-blocks", "tables", "break-on-newline", "spoiler"])
     
-    if lang_code not in voice_map:
-        return None, f"지원하지 않는 언어: {lang_code}"
+    # 폴백 
+    html = md_text
+    
+    # 헤딩 변환
+    html = re.sub(r'^###\s*(.*)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
+    html = re.sub(r'^##\s*(.*)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
+    html = re.sub(r'^#\s*(.*)$', r'<h1>\1</h1>', html, flags=re.MULTILINE)
+    
+    # 볼드 텍스트
+    html = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html)
+    
+    # 리스트 변환
+    html = re.sub(r'^- (.*)$', r'<li>\1</li>', html, flags=re.MULTILINE)
+    
+    # 연속된 li 태그들을 ul로 감싸기
+    html = re.sub(r'(<li>.*?</li>)(?:\n(<li>.*?</li>))+', lambda m: '<ul>' + m.group(0).replace('\n', '') + '</ul>', html, flags=re.DOTALL)
+    
+    # 줄바꿈 처리
+    html = html.replace('\n\n', '</p><p>')
+    html = html.replace('\n', '<br>')
+    
+    # 문단 태그로 감싸기
+    if not html.startswith('<'):
+        html = '<p>' + html + '</p>'
+    
+    return html
+
+def create_translated_html(translated_text: str, title: str = "번역된 내용") -> str:
+    """번역된 텍스트를 예쁜 HTML로 변환"""
+    html_content = md_to_html(translated_text)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    
+    return f"""
+    <html>
+      <head>
+        {EMBED_HEAD}
+        <style>{EMBED_CSS}</style>
+      </head>
+      <body>
+        <div class="report-wrap">
+          <div class="translation-content">
+            <div style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px;">
+              <h1 style="margin: 0; color: var(--primary);">🌐 {title}</h1>
+              <p style="margin: 8px 0 0 0; color: var(--muted); font-size: 14px;">📅 {timestamp}</p>
+            </div>
+            <div>{html_content}</div>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+
+#  PNG 저장 시 텍스트 깨짐 방지를 위한 폰트 로더
+def get_font(size=16, bold=False):
+    """
+    애플리케이션에 번들된 폰트를 우선 로드합니다.
+    이를 통해 어떤 환경에서도 한글이 깨지지 않도록 보장합니다.
+    """
+    font_name = "NotoSansKR-Bold.ttf" if bold else "NotoSansKR-Regular.ttf"
+    font_path = Path(__file__).parent / font_name
     
     try:
-        # 단일 청크인 경우
-        if len(text_chunks) == 1:
-            request_body = {
-                "input": {"text": text_chunks[0]},
-                "voice": voice_map[lang_code],
-                "audioConfig": {
-                    "audioEncoding": "MP3",
-                    "speakingRate": 0.85,
-                    "pitch": -5
-                }
-            }
-            
-            response = requests.post(TTS_API_URL, data=json.dumps(request_body), timeout=30)
-            
-            if response.status_code == 200:
-                audio_content = base64.b64decode(response.json()['audioContent'])
-                
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
-                    tmp_file.write(audio_content)
-                    return tmp_file.name, "음성 생성 완료!"
-            else:
-                return None, f"TTS 오류: {response.text}"
-        
-        # 여러 청크인 경우 첫 번째 청크만 처리 (Gradio 제한)
-        else:
-            first_chunk = text_chunks[0]
-            request_body = {
-                "input": {"text": first_chunk},
-                "voice": voice_map[lang_code],
-                "audioConfig": {
-                    "audioEncoding": "MP3",
-                    "speakingRate": 0.85,
-                    "pitch": -5
-                }
-            }
-            
-            response = requests.post(TTS_API_URL, data=json.dumps(request_body), timeout=30)
-            
-            if response.status_code == 200:
-                audio_content = base64.b64decode(response.json()['audioContent'])
-                
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
-                    tmp_file.write(audio_content)
-                    return tmp_file.name, f"음성 생성 완료! (긴 텍스트로 인해 {len(text_chunks)}개 중 첫 번째 부분만 재생)"
-            else:
-                return None, f"TTS 오류: {response.text}"
-            
-    except Exception as e:
-        return None, f"TTS 오류: {e}"
+        # 1. 번들된 폰트 사용 시도 (가장 안정적)
+        return ImageFont.truetype(str(font_path), size)
+    except IOError:
+        print(f"경고: 번들 폰트 '{font_path}'를 찾을 수 없습니다. 시스템 폰트를 탐색합니다.")
+        # 2. Windows 시스템 폰트
+        try:
+            return ImageFont.truetype("malgun.ttf", size)
+        except IOError:
+            # 3. macOS 시스템 폰트
+            try:
+                return ImageFont.truetype("/System/Library/Fonts/AppleSDGothicNeo.ttc", size)
+            except IOError:
+                # 4. 최후의 수단
+                return ImageFont.load_default()
 
-# 📄 파일 처리 함수 (간단한 텍스트 추출)
+
+# HTML 보고서 생성
+def render_report_html(file_name: str, rule_analysis: dict, ai_analysis: dict, title="🏠 AI 부동산 계약서 종합 분석 리포트") -> str:
+    score = rule_analysis.get("safety_score", -1)
+    if score >= 80:
+        grade_text = f"매우 안전 ({score}점)"
+    elif score >= 50:
+        grade_text = f"보통 ({score}점)"
+    elif score >= 0:
+        grade_text = f"위험 ({score}점)"
+    else:
+        grade_text = "점수 계산 오류"
+
+    alerts = rule_analysis.get("alerts", [])
+    alerts_html = []
+    for a in alerts:
+        cls = "alert"
+        # 키워드 기반으로 alert 종류 자동 판별
+        if any(keyword in a for keyword in ["치명", "🚨", "반드시"]):
+            cls += " critical"
+        elif any(keyword in a for keyword in ["위험", "경고", "⚠️", "주의"]):
+            cls += " warn"
+        else: # "권장", "✅", "💡" 등
+            cls += " ok"
+        
+        # ::before 아이콘을 사용하므로, 텍스트에서 이모티콘은 제거
+        clean_alert_text = re.sub(r'^[🚨⚠️✅💡🕵️]+', '', a).strip()
+        alerts_html.append(f'<div class="{cls}">{md_to_html(clean_alert_text)}</div>')
+        
+    alerts_html = "\n".join(alerts_html) if alerts_html else '<div class="alert">표시할 알림이 없습니다.</div>'
+
+    ai_block = md_to_html(ai_analysis.get("analysis", ""))
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    html = f"""
+    <html>
+      <head>
+        {EMBED_HEAD}
+        <style>{EMBED_CSS}</style>
+      </head>
+      <body>
+        <div class="report-wrap">
+          <article class="report-card">
+            <header class="report-header">
+              <h1>{title}</h1>
+              <div class="meta">
+                <span class="badge">📄 {file_name}</span> 
+                <span class="badge">📅 {timestamp}</span>
+              </div>
+              <div style="margin-top:16px;"><span class="grade">{grade_text}</span></div>
+            </header>
+
+            <section class="report-section">
+              <h2>계약서 안전도 검사</h2>
+              <div class="alerts">{alerts_html}</div>
+            </section>
+
+            <section class="report-section">
+              <h2>AI 심층 분석</h2>
+              <div>{ai_block}</div>
+            </section>
+
+            <footer class="footer-note">
+              본 분석은 참고용이며 법적 효력이 없습니다. 중요한 결정 전 반드시 전문가와 상담하시기 바랍니다.
+            </footer>
+          </article>
+        </div>
+      </body>
+    </html>
+    """
+    return html
+
+
+# 기존 함수들을 여기에 포함 (길어서 생략하지만 실제로는 모두 포함되어야 함)
 def extract_text_from_file(file_path: str) -> tuple[str, str]:
-    """파일에서 텍스트 추출 (간단 버전)"""
     if not file_path or not os.path.exists(file_path):
         return "", "파일을 찾을 수 없습니다"
-    
     file_extension = Path(file_path).suffix.lower()
-    
-    # 텍스트 파일인 경우
     if file_extension in ['.txt', '.md']:
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 return f.read(), "성공"
         except:
             return "", "텍스트 파일 읽기 실패"
-    
-    # 이미지나 PDF인 경우 (Upstage 라이브러리 사용 시도)
     try:
         if UPSTAGE_AVAILABLE:
             pages = UpstageDocumentParseLoader(file_path, ocr="force").load()
@@ -198,7 +409,6 @@ def extract_text_from_file(file_path: str) -> tuple[str, str]:
                 return "", "텍스트 추출 실패"
             return extracted_text, "성공"
         else:
-            # Upstage 라이브러리가 없는 경우 샘플 텍스트 반환
             sample_text = f"""
 이는 {file_extension} 파일에서 추출된 샘플 텍스트입니다.
 
@@ -226,59 +436,8 @@ def extract_text_from_file(file_path: str) -> tuple[str, str]:
     except Exception as e:
         return f"파일 처리 중 오류: {str(e)}", "오류"
 
-# 📊 텍스트 품질 분석 (외부 출력X)
-def analyze_text_quality(text: str) -> dict:
-    """텍스트 품질 분석 (UI에 표시하지 않음)"""
-    if not text:
-        return {"quality_level": "EMPTY", "confidence": 0, "details": {}}
-    
-    word_count = len(text.split())
-    char_count = len(text)
-    korean_ratio = sum(1 for c in text if '가' <= c <= '힣') / len(text) if len(text) > 0 else 0
-    essential_keywords = ['임대차', '계약', '보증금', '임대인', '임차인', '월세', '전세']
-    found_keywords = sum(1 for k in essential_keywords if k in text)
-    
-    score = (
-        (word_count >= 100) * 30 + 
-        (korean_ratio >= 0.3) * 25 + 
-        (found_keywords >= 3) * 25 + 
-        (len(text) >= 500) * 20
-    )
-    
-    level = "HIGH" if score >= 80 else "MEDIUM" if score >= 50 else "LOW"
-    
-    return {
-        "quality_level": level,
-        "confidence": int(score),
-        "details": {
-            "총 단어 수": f"{word_count:,}개",
-            "총 문자 수": f"{char_count:,}개",
-            "한글 비율": f"{korean_ratio:.1%}",
-            "필수 키워드": f"{found_keywords}/{len(essential_keywords)}개 발견"
-        }
-    }
-
-# 🏠 계약서 분석 엔진 (간단)
-def extract_landlord_name(contract_text: str) -> str:
-    """임대인 이름 추출 (간단 버전)"""
-    # 정규표현식으로 임대인 이름 찾기
-    patterns = [
-        r'임대인[:\s]*([가-힣]{2,4})',
-        r'집주인[:\s]*([가-힣]{2,4})',
-        r'소유자[:\s]*([가-힣]{2,4})'
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, contract_text)
-        if match:
-            return match.group(1)
-    
-    return "추출 실패"
-
 def perform_rule_based_analysis(contract_text: str) -> dict:
-    """규칙 기반 계약서 분석"""
     alerts, safety_score = [], 100
-    
     try:
         categories = {
             "보증금_반환": {"keywords": ["보증금", "반환", "즉시", "계약종료"], "risk": "CRITICAL"},
@@ -287,12 +446,10 @@ def perform_rule_based_analysis(contract_text: str) -> dict:
             "수선_의무": {"keywords": ["수선", "하자", "파손", "수리"], "risk": "ADVISORY"},
             "특약사항": {"keywords": ["특약", "기타사항", "추가조건"], "risk": "ADVISORY"}
         }
-        
         for cat_name, info in categories.items():
             display_name = cat_name.replace('_', ' ')
             keyword_count = sum(1 for kw in info['keywords'] if kw in contract_text)
             keyword_ratio = keyword_count / len(info['keywords'])
-            
             if keyword_ratio < 0.3:
                 if info['risk'] == "CRITICAL":
                     safety_score -= 40
@@ -307,22 +464,13 @@ def perform_rule_based_analysis(contract_text: str) -> dict:
                 alerts.append(f"✅ [{display_name}] 관련 조항이 확인되었습니다. ({keyword_count}/{len(info['keywords'])}개 키워드)")
 
         safety_score = max(0, safety_score)
-        
-        # 임대인 이름 추출
-        landlord_name = extract_landlord_name(contract_text)
-        if landlord_name != "추출 실패":
-            alerts.append(f"✅ [임대인 정보] 임대인 이름: '{landlord_name}'")
-        else:
-            alerts.append("⚠️ [임대인 정보] 임대인 이름을 자동으로 찾지 못했습니다.")
-            
+        return {"alerts": alerts, "safety_score": safety_score}
     except Exception as e:
         alerts.append(f"⚠️ 분석 중 오류 발생: {str(e)}")
         safety_score = -1
-    
-    return {"alerts": alerts, "safety_score": safety_score}
+        return {"alerts": alerts, "safety_score": safety_score}
 
 def perform_ai_analysis(contract_text: str) -> dict:
-    """AI 기반 계약서 분석 (실제 API 사용)"""
     try:
         if UPSTAGE_AVAILABLE and UPSTAGE_API_KEY:
             prompt = ChatPromptTemplate.from_template(
@@ -331,47 +479,112 @@ def perform_ai_analysis(contract_text: str) -> dict:
 [계약서]
 {contract}
 
-다음 사항들을 중점적으로 분석해주세요:
-1. 임차인에게 불리한 조항
-2. 누락된 중요 조항
-3. 개선 방안
-4. 주의사항
-
-친절하고 이해하기 쉽게 설명해주세요."""
+다음 사항들을 중점적으로, 임차인의 입장에서 이해하기 쉽게 마크다운 형식으로 항목을 나누어 분석해주세요:
+1.  **임차인에게 불리한 조항**: 독소 조항이나 일반적으로 임차인에게 불리하게 작용할 수 있는 내용을 짚어주세요.
+2.  **누락된 중요 조항**: 임차인 보호를 위해 반드시 포함되어야 하지만 빠져 있는 조항이 있는지 확인해주세요.
+3.  **개선 방안 및 대안 제시**: 발견된 문제점에 대해 구체적으로 어떻게 수정하거나 추가하면 좋을지 대안을 제시해주세요.
+4.  **종합적인 법률 자문**: 계약 전반에 대한 종합적인 의견과 추가적으로 확인해야 할 사항(등기부등본 확인 등)을 알려주세요.
+"""
             )
-            
             chain = prompt | ChatUpstage(model="solar-pro") | StrOutputParser()
             analysis_result = chain.invoke({"contract": contract_text})
             return {"analysis": analysis_result}
-        
         else:
-            # API 키가 없는 경우 간단한 분석 제공
             analysis_result = f"""
-**🔍 계약서 간단 분석 결과**
+### 📝 계약서 간단 분석 결과
 
-**📋 계약서 개요**
-- 계약서 길이: {len(contract_text):,}자
-- 주요 키워드 확인: {'임대차' in contract_text}, {'보증금' in contract_text}, {'계약' in contract_text}
+**이 분석은 Upstage API 키가 없어 샘플로 제공되는 것입니다.**
 
-**⚠️ 주의사항**
-1. **보증금 반환 조항**: {'보증금 반환' in contract_text if '보증금' in contract_text else '확인 필요'}
-2. **계약 해지 조건**: {'해지' in contract_text if '해지' in contract_text else '명시되지 않음'}
-3. **특약사항**: {'특약' in contract_text if '특약' in contract_text else '확인 필요'}
+-   **계약서 개요**:
+    -   계약서 길이: {len(contract_text):,}자
+    -   주요 키워드: '임대차', '보증금' 등 계약의 기본 요소가 포함되어 있는지 확인합니다.
 
-**💡 권장사항**
-- 전문 법무사와 상담을 받으시기 바랍니다
-- 계약서의 모든 조항을 꼼꼼히 검토하세요
-- 불분명한 조항은 반드시 명확히 하고 계약하세요
+-   **⚠️ 주의가 필요한 항목 (샘플)**:
+    1.  **보증금 반환 조항**: "계약 만료 시 즉시 반환한다"와 같은 명확한 문구가 있는지 확인해야 합니다.
+    2.  **수선 의무**: 주요 시설(보일러, 수도 등) 고장에 대한 수리 책임이 누구에게 있는지 명시되어야 합니다.
+    3.  **특약사항 검토**: 임차인에게 일방적으로 불리한 특약(예: 과도한 원상복구 의무)이 있는지 꼼꼼히 봐야 합니다.
 
-*실제 AI 분석을 위해서는 Upstage API 키가 필요합니다.*
+-   **💡 권장사항**:
+    -   등기부등본을 발급받아 계약서상 임대인과 실제 소유주가 일치하는지 확인하세요.
+    -   계약 전 해당 주소의 전입세대열람을 통해 선순위 임차인이 있는지 확인하세요.
 """
             return {"analysis": analysis_result}
-            
     except Exception as e:
         return {"analysis": f"분석 중 오류 발생: {str(e)}"}
 
+def deepl_translate_text(text, target_lang):
+    if not DEEPL_API_KEY:
+        lang_names = {"EN": "영어", "JA": "일본어", "ZH": "중국어", "UK": "우크라이나어", "VI": "베트남어"}
+        return f"[{lang_names.get(target_lang, target_lang)} 번역 기능]\n\nDeepL API 키가 설정되지 않아 실제 번역은 불가능합니다.\n\n원본 텍스트:\n{text[:500]}..."
+    try:
+        headers = {"Authorization": f"DeepL-Auth-Key {DEEPL_API_KEY}"}
+        data = {"text": [text], "target_lang": target_lang}
+        response = requests.post(DEEPL_API_URL, headers=headers, json=data, timeout=30)
+        response.raise_for_status()
+        return response.json()["translations"][0]["text"]
+    except Exception as e:
+        return f"번역 오류: {e}\n\n원본 텍스트:\n{text[:500]}..."
+
+def split_text_for_tts(text, max_bytes=4500):
+    if len(text.encode('utf-8')) <= max_bytes:
+        return [text]
+    chunks, current_chunk = [], ""
+    sentences = re.split(r'(?<=[.!?다])\s+', text)
+    for sentence in sentences:
+        test_chunk = current_chunk + sentence + " "
+        if len(test_chunk.encode('utf-8')) <= max_bytes:
+            current_chunk = test_chunk
+        else:
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+            if len(sentence.encode('utf-8')) > max_bytes:
+                words = sentence.split()
+                temp_chunk = ""
+                for word in words:
+                    test_word_chunk = temp_chunk + word + " "
+                    if len(test_word_chunk.encode('utf-8')) <= max_bytes:
+                        temp_chunk = test_word_chunk
+                    else:
+                        if temp_chunk.strip():
+                            chunks.append(temp_chunk.strip())
+                        temp_chunk = word + " "
+                current_chunk = temp_chunk
+            else:
+                current_chunk = sentence + " "
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+    return chunks
+
+def google_text_to_speech(text, lang_code="KO"):
+    if not GOOGLE_API_KEY:
+        return None, "Google API 키가 설정되지 않아 음성 생성이 불가능합니다."
+    text = re.sub(r"[^\w\s가-힣.,!?]", "", text) # 구두점 일부 유지
+    text_chunks = split_text_for_tts(text)
+    voice_map = {
+        "KO": {"languageCode": "ko-KR", "name": "ko-KR-Wavenet-A"},
+        "EN": {"languageCode": "en-US", "name": "en-US-Wavenet-F"},
+        "JA": {"languageCode": "ja-JP", "name": "ja-JP-Wavenet-A"},
+        "ZH": {"languageCode": "cmn-CN", "name": "cmn-CN-Wavenet-A"},
+    }
+    if lang_code not in voice_map:
+        return None, f"지원하지 않는 언어: {lang_code}"
+    try:
+        first_chunk = text_chunks[0]
+        request_body = {"input": {"text": first_chunk}, "voice": voice_map[lang_code],
+                        "audioConfig": {"audioEncoding": "MP3", "speakingRate": 0.9, "pitch": -2}}
+        response = requests.post(TTS_API_URL, data=json.dumps(request_body), timeout=30)
+        if response.status_code == 200:
+            audio_content = base64.b64decode(response.json()['audioContent'])
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
+                tmp_file.write(audio_content)
+                msg = "음성 생성 완료!" if len(text_chunks) == 1 else f"음성 생성 완료! (긴 텍스트로 인해 {len(text_chunks)}개 중 첫 번째 부분만 재생)"
+                return tmp_file.name, msg
+        else:
+            return None, f"TTS 오류: {response.text}"
+    except Exception as e:
+        return None, f"TTS 오류: {e}"
+
 def generate_report(file_name, rule_analysis, ai_analysis):
-    """종합 분석 리포트 생성 (간소화된 버전)"""
     score = rule_analysis['safety_score']
     if score >= 80:
         safety_grade = f"✅ 매우 안전 ({score}점)"
@@ -381,9 +594,7 @@ def generate_report(file_name, rule_analysis, ai_analysis):
         safety_grade = f"🚨 위험! ({score}점)"
     else:
         safety_grade = "⚠️ 점수 계산 오류"
-    
     alerts_text = "\n".join([f"- {alert}" for alert in rule_analysis['alerts']])
-    
     return f"""# 🏠 AI 부동산 계약서 종합 분석 리포트
 
 ## 📋 분석 대상
@@ -401,56 +612,289 @@ def generate_report(file_name, rule_analysis, ai_analysis):
 ***본 분석은 참고용이며 법적 효력이 없습니다. 중요한 결정 전 반드시 전문가와 상담하시기 바랍니다.***
 """
 
-# 🎯 Gradio module
-def analyze_contract(file):
-    """계약서 분석 메인 함수"""
-    if file is None:
-        return "❌ 파일을 업로드해주세요.", ""
+# 텍스트만 추출하는 유틸리티 함수
+def extract_clean_text_from_html(html_content: str) -> str:
+    """HTML에서 순수 텍스트만 추출 (CSS, 태그 제거)"""
+    # CSS 스타일 블록 완전 제거
+    text = re.sub(r'<style[^>]*>.*?</style>', '', html_content, flags=re.DOTALL)
+    # script 태그도 제거
+    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL)
+    # head 태그 전체 제거
+    text = re.sub(r'<head[^>]*>.*?</head>', '', text, flags=re.DOTALL)
     
+    # 블록 태그를 개행으로 변환
+    text = re.sub(r'</?(h1|h2|h3|h4|h5|h6|p|div|section|article|header|footer)>', '\n', text)
+    text = re.sub(r'<br\s*/?>', '\n', text)
+    
+    # 나머지 모든 HTML 태그 제거
+    text = re.sub(r'<[^>]+>', '', text)
+    
+    # HTML 엔티티 디코딩
+    text = text.replace('&nbsp;', ' ')
+    text = text.replace('&lt;', '<')
+    text = text.replace('&gt;', '>')
+    text = text.replace('&amp;', '&')
+    
+    # 연속된 공백과 개행 정리
+    text = re.sub(r'\n\s*\n', '\n\n', text)
+    text = re.sub(r'[ \t]+', ' ', text)
+    
+    # 앞뒤 공백 제거 및 빈 줄 정리
+    lines = [line.strip() for line in text.split('\n')]
+    clean_lines = []
+    for line in lines:
+        if line or (clean_lines and clean_lines[-1]):  # 연속된 빈 줄 방지
+            clean_lines.append(line)
+    
+    return '\n'.join(clean_lines).strip()
+
+# 이모지를 텍스트로 변환하는 함수
+def convert_emoji_to_text(text: str) -> str:
+    """이모지를 한글 텍스트로 변환"""
+    emoji_map = {
+        '🏠': '[집]', '📋': '[문서]', '🔍': '[검색]', '📊': '[차트]', 
+        '💬': '[채팅]', '🤖': '[AI]', '📄': '[파일]', '📅': '[날짜]',
+        '🚨': '[경고]', '⚠️': '[주의]', '✅': '[확인]', '💡': '[아이디어]',
+        '🕵️': '[탐정]', '🌍': '[지구]', '🔊': '[스피커]', '📸': '[카메라]',
+        '🗑️': '[휴지통]', '📤': '[업로드]', '🏢': '[빌딩]', '📝': '[메모]',
+        '🧠': '[뇌]', '👍': '[좋아요]', '❌': '[X]', '⭐': '[별]'
+    }
+    
+    for emoji, text_replacement in emoji_map.items():
+        text = text.replace(emoji, text_replacement)
+    
+    # 남은 이모지들을 일반적인 패턴으로 제거하거나 변환
+    text = re.sub(r'[\U0001F600-\U0001F64F]', '[이모지]', text)  # 감정 이모지
+    text = re.sub(r'[\U0001F300-\U0001F5FF]', '[기호]', text)    # 기호 이모지
+    text = re.sub(r'[\U0001F680-\U0001F6FF]', '[교통]', text)    # 교통 이모지
+    text = re.sub(r'[\U0001F1E0-\U0001F1FF]', '[국기]', text)    # 국가 이모지
+    
+    return text
+
+# HTML 보고서를 PNG로 저장하는 함수들 (개선된 버전)
+def html_to_png_downloadable(html_content: str, filename_prefix="report_html"):
+    """HTML을 PNG로 저장 - 순수 텍스트만 추출하여 깔끔하게 저장"""
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # HTML에서 순수 텍스트만 추출
+    clean_text = extract_clean_text_from_html(html_content)
+    
+    # 이모지를 텍스트로 변환
+    clean_text = convert_emoji_to_text(clean_text)
+    
+    # PIL로 깔끔한 이미지 생성
+    img = create_clean_report_image(clean_text, filename_prefix)
+    out_path = Path(tempfile.gettempdir()) / f"{filename_prefix}_{ts}.png"
+    img.save(out_path, format='PNG', quality=95, optimize=True)
+    return str(out_path)
+
+def create_clean_report_image(report_text: str, report_type: str = "report") -> Image.Image:
+    """깔끔한 텍스트 기반 리포트 이미지 생성 (이모지 없음, CSS 없음)"""
+    width = 1200
+    margin = 50
+    line_height = 28
+    
+    # 폰트 설정
+    title_font = get_font(28, bold=True)
+    heading_font = get_font(20, bold=True) 
+    text_font = get_font(16, bold=False)
+    small_font = get_font(14, bold=False)
+    
+    # 텍스트 전처리 및 높이 계산
+    lines = []
+    current_y = margin + 60
+    
+    # 제목 추가
+    if "analysis" in report_type or "분석" in report_type:
+        title = "AI 부동산 계약서 분석 리포트"
+    else:
+        title = "AI 상담 답변"
+    
+    lines.append(('title', title, current_y))
+    current_y += 50
+    
+    # 날짜 추가
+    date_str = f"생성일시: {datetime.now().strftime('%Y년 %m월 %d일 %H시 %M분')}"
+    lines.append(('date', date_str, current_y))
+    current_y += 40
+    
+    # 구분선
+    lines.append(('divider', '', current_y))
+    current_y += 30
+    
+    # 본문 처리
+    for line in report_text.split('\n'):
+        line = line.strip()
+        if not line:
+            current_y += 15
+            continue
+            
+        # 헤딩 처리 (# 제거)
+        if line.startswith('# '):
+            text = line[2:].strip()
+            lines.append(('h1', text, current_y))
+            current_y += 45
+        elif line.startswith('## '):
+            text = line[3:].strip()
+            lines.append(('h2', text, current_y))
+            current_y += 35
+        elif line.startswith('### '):
+            text = line[4:].strip()
+            lines.append(('h3', text, current_y))
+            current_y += 30
+        # 리스트 처리
+        elif line.startswith('- '):
+            text = line[2:].strip()
+            # 긴 텍스트는 자동 줄바꿈
+            wrapped = textwrap.fill(text, width=80)
+            for wrapped_line in wrapped.split('\n'):
+                lines.append(('bullet', wrapped_line, current_y))
+                current_y += line_height
+        # 볼드 처리 (** 제거)
+        elif line.startswith('**') and line.endswith('**'):
+            text = line[2:-2].strip()
+            lines.append(('bold', text, current_y))
+            current_y += line_height
+        # 구분선
+        elif '---' in line:
+            lines.append(('divider', '', current_y))
+            current_y += 20
+        # 일반 텍스트
+        else:
+            # 긴 줄 자동 줄바꿈
+            wrapped = textwrap.fill(line, width=90)
+            for wrapped_line in wrapped.split('\n'):
+                lines.append(('text', wrapped_line, current_y))
+                current_y += line_height
+    
+    # 푸터 공간
+    current_y += 30
+    lines.append(('footer', '본 분석은 참고용이며 법적 효력이 없습니다. 중요한 결정 전 반드시 전문가와 상담하시기 바랍니다.', current_y))
+    current_y += 50
+    
+    # 최종 이미지 크기
+    total_height = current_y + margin
+    
+    # 이미지 생성
+    img = Image.new('RGB', (width, total_height), '#ffffff')
+    draw = ImageDraw.Draw(img)
+    
+    # 헤더 배경
+    header_height = 120
+    draw.rectangle([0, 0, width, header_height], fill='#00C278')
+    
+    # 메인 컨텐츠 배경 (흰색 카드)
+    draw.rectangle([margin//2, header_height, width-margin//2, total_height-margin//2],
+                   fill='#ffffff', outline='#e5e7eb', width=2)
+    
+    # 텍스트 렌더링
+    for line_type, text, y in lines:
+        if line_type == 'title':
+            # 제목 중앙 정렬
+            bbox = draw.textbbox((0, 0), text, font=title_font)
+            x = (width - (bbox[2] - bbox[0])) // 2
+            draw.text((x, 30), text, fill='#ffffff', font=title_font)
+            
+        elif line_type == 'date':
+            # 날짜 우측 정렬
+            bbox = draw.textbbox((0, 0), text, font=small_font)
+            x = width - margin - (bbox[2] - bbox[0])
+            draw.text((x, y), text, fill='#6b7280', font=small_font)
+            
+        elif line_type == 'divider':
+            # 구분선
+            draw.line([margin, y, width-margin, y], fill='#e5e7eb', width=2)
+            
+        elif line_type == 'h1':
+            draw.text((margin, y), text, fill='#00C278', font=get_font(22, bold=True))
+            # 헤딩 밑줄
+            draw.line([margin, y+32, margin+300, y+32], fill='#00C278', width=3)
+            
+        elif line_type == 'h2':
+            draw.text((margin, y), text, fill='#667eea', font=heading_font)
+            
+        elif line_type == 'h3':
+            draw.text((margin, y), text, fill='#1f2937', font=get_font(18, bold=True))
+            
+        elif line_type == 'bullet':
+            # 불릿 포인트
+            draw.text((margin, y), "•", fill='#00C278', font=text_font)
+            draw.text((margin + 20, y), text, fill='#374151', font=text_font)
+            
+        elif line_type == 'bold':
+            draw.text((margin, y), text, fill='#dc2626', font=get_font(16, bold=True))
+            
+        elif line_type == 'text':
+            draw.text((margin, y), text, fill='#374151', font=text_font)
+            
+        elif line_type == 'footer':
+            # putter 텍스트 중앙 정렬
+            bbox = draw.textbbox((0, 0), text, font=small_font)
+            x = (width - (bbox[2] - bbox[0])) // 2
+            draw.text((x, y), text, fill='#6b7280', font=small_font)
+    
+    return img
+
+def create_report_image(report_text, title="AI 계약서 분석 리포트", lang="ko"):
+    """기존 PIL 이미지 생성 함수 - 사용하지 않음 (하위 호환용으로만 유지)"""
+    return create_clean_report_image(report_text, "legacy_report")
+
+def wrap_chat_html(answer_html_or_md: str, title="🤖 AI 답변"):
+    content = md_to_html(answer_html_or_md)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    html = f"""
+    <html>
+      <head>
+        {EMBED_HEAD}
+        <style>{EMBED_CSS}</style>
+      </head>
+      <body>
+        <div class="report-wrap">
+          <article class="report-card">
+            <header class="report-header" style="background: linear-gradient(135deg, #667eea, #764ba2);">
+              <h1>{title}</h1>
+              <div class="meta">📅 생성일시: {timestamp}</div>
+            </header>
+            <section class="report-section">
+              <div>{content}</div>
+            </section>
+          </article>
+        </div>
+      </body>
+    </html>
+    """
+    return html
+
+
+# Gradio용 functions
+def analyze_contract(file, progress=gr.Progress(track_tqdm=True)):
+    if file is None:
+        return "❌ 파일을 업로드해주세요.", "", "", ""
     try:
-        print(f"파일 분석 시작: {file.name}")
-        
-        # 파일에서 텍스트 추출
+        progress(0.1, desc="[1/4] 파일에서 텍스트 추출 중...")
         text, status = extract_text_from_file(file.name)
         if not text:
-            return f"❌ 텍스트 추출 실패: {status}", ""
+            return f"❌ 텍스트 추출 실패: {status}", "", "", ""
         
-        print(f"텍스트 추출 성공: {len(text)}자")
-        
-        # 텍스트 품질 분석 (내부, UI에 표시하지 않음)
-        quality = analyze_text_quality(text)
-        print(f"품질 분석 완료: {quality['quality_level']}")
-        
-        # 규칙 기반 분석
+        progress(0.4, desc="[2/4] 규칙 기반 안전도 분석 중...")
         rule_analysis = perform_rule_based_analysis(text)
-        print("규칙 기반 분석 완료")
         
-        # AI 분석
+        progress(0.7, desc="[3/4] AI 심층 분석 진행 중...")
         ai_analysis = perform_ai_analysis(text)
-        print("AI 분석 완료")
+
+        progress(0.9, desc="[4/4] 최종 보고서 생성 중...")
+        md_report = generate_report(os.path.basename(file.name), rule_analysis, ai_analysis)
+        html_report = render_report_html(os.path.basename(file.name), rule_analysis, ai_analysis)
         
-        # 리포트 생성 (품질 정보 제외)
-        report = generate_report(
-            os.path.basename(file.name),
-            rule_analysis,
-            ai_analysis
-        )
-        
-        return report, text
-        
+        return html_report, text, md_report, html_report
     except Exception as e:
-        error_msg = f"❌ 분석 중 오류 발생: {str(e)}"
-        print(error_msg)
-        return error_msg, ""
+        return f"❌ 분석 중 오류 발생: {str(e)}", "", "", ""
 
 def chat_with_ai(message, history):
-    """AI 법률 비서 채팅 (실제 API 사용)"""
     if not message.strip():
         return history, ""
-    
     try:
         if UPSTAGE_AVAILABLE and UPSTAGE_API_KEY:
-            # 실제 AI API 사용
             prompt = ChatPromptTemplate.from_template(
                 """당신은 한국 부동산 법률 전문가입니다. 사용자의 질문에 친절하고 정확하게 답변해주세요.
 
@@ -460,14 +904,10 @@ def chat_with_ai(message, history):
 - 한국 부동산 관련 법률과 실무에 기반한 정확한 정보 제공
 - 이해하기 쉬운 용어와 구체적인 예시 포함
 - 필요시 주의사항과 권장사항도 함께 안내
-- 법적 효력이 없음을 명시하고 전문가 상담 권유"""
-            )
-            
+- 법적 효력이 없음을 명시하고 전문가 상담 권유""")
             chain = prompt | ChatUpstage(model="solar-pro") | StrOutputParser()
             response = chain.invoke({"question": message})
-            
         else:
-            # API 키가 없는 경우 간단한 규칙 기반 응답
             responses = {
                 "보증금": "보증금 관련 질문이시군요! 보증금은 계약 종료 시 반드시 반환되어야 하며, 지연 시 이자도 지급해야 합니다.",
                 "전세": "전세 계약에서는 확정일자를 받고, 전입신고를 하여 대항력을 확보하는 것이 중요합니다.",
@@ -475,16 +915,13 @@ def chat_with_ai(message, history):
                 "계약서": "계약서에는 당사자 정보, 목적물 정보, 임대조건, 특약사항이 명확히 기재되어야 합니다.",
                 "임대인": "임대인의 신원을 확인하고, 등기부등본을 통해 실제 소유자인지 확인하는 것이 중요합니다."
             }
-            
             response = "안녕하세요! 부동산 관련 질문에 답변드리겠습니다.\n\n"
-            
-            found_keyword = False
-            for keyword, answer in responses.items():
-                if keyword in message:
-                    response += f"**{keyword} 관련 답변:**\n{answer}\n\n"
-                    found_keyword = True
-            
-            if not found_keyword:
+            found = False
+            for k, ans in responses.items():
+                if k in message:
+                    response += f"**{k} 관련 답변:**\n{ans}\n\n"
+                    found = True
+            if not found:
                 response += """다음과 같은 부동산 관련 주제로 질문해주세요:
 - 보증금 반환
 - 전세 vs 월세
@@ -492,360 +929,290 @@ def chat_with_ai(message, history):
 - 임대인 확인
 - 계약 갱신
 - 특약 조항"""
-            
             response += "\n*실제 AI 상담을 위해서는 Upstage API 키가 필요합니다.*"
-        
         response += "\n\n💡 **전문적인 법률 상담이 필요한 경우 변호사나 법무사와 상담받으시기 바랍니다.**"
-        
         history.append((message, response))
-        return history, ""
-        
+        return history, response
     except Exception as e:
-        error_msg = f"❌ 답변 생성 중 오류: {str(e)}"
-        history.append((message, error_msg))
-        return history, ""
+        err_msg = f"❌ 답변 생성 중 오류: {str(e)}"
+        history.append((message, err_msg))
+        return history, err_msg
 
-def translate_text(text, target_lang):
-    """텍스트 번역"""
-    if not text.strip():
-        return "번역할 텍스트가 없습니다."
-    
-    return deepl_translate_text(text, target_lang)
 
-def generate_speech(text, language):
-    """텍스트를 음성으로 변환"""
-    if not text.strip():
-        return None, "음성으로 변환할 텍스트가 없습니다."
-    
-    lang_map = {
-        "한국어": "KO",
-        "영어": "EN",
-        "일본어": "JA",
-        "중국어": "ZH"
-    }
-    
-    if language not in lang_map:
-        return None, "지원하지 않는 언어입니다."
-    
-    return google_text_to_speech(text, lang_map[language])
-
-# 🎨 Gradio 인터페이스 구성
+# Gradio 인터페이스 
 def create_interface():
-    """Gradio 인터페이스 생성"""
-    
-    # CSS 스타일링 (초록색 배경으로 변경)
     css = """
-    .gradio-container {
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    }
+    .gradio-container { font-family: 'Noto Sans KR', sans-serif !important; }
     .main-header {
         text-align: center;
-        background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
-        color: white;
-        padding: 1rem;
-        border-radius: 10px;
-        margin-bottom: 1rem;
+        background: linear-gradient(135deg, #00C278, #00a366);
+        color: white; padding: 2rem; border-radius: 20px; margin-bottom: 1.5rem;
+        box-shadow: 0 8px 30px rgba(0, 194, 120, 0.3);
+    }
+    .main-header h1 { font-weight: 700; font-size: 2.5em; }
+    .main-header p { font-size: 1.1em; opacity: 0.9; }
+
+    /* 채팅 말풍선 스타일 */
+    .chatbot { background-color: #f9fafb !important; border-radius: 20px !important; }
+    @media (prefers-color-scheme: dark) {
+        .chatbot { background-color: #0b0f16 !important; }
+    }
+    
+    .chatbot .message-wrap { justify-content: flex-start !important; }
+    .chatbot .message.user {
+        background: linear-gradient(135deg, #00C278, #00a366) !important;
+        color: white !important;
+        border-bottom-right-radius: 2px !important;
+    }
+    .chatbot .message.bot {
+        background: #ffffff !important;
+        color: #31333F !important;
+        border: 1px solid #e5e7eb !important;
+        border-bottom-left-radius: 2px !important;
+    }
+    @media (prefers-color-scheme: dark) {
+        .chatbot .message.bot { background: #111827 !important; color: #e5e7eb !important; border-color: #1f2937 !important;}
+    }
+
+    /* 버튼 스타일 통일 */
+    .gradio-container button {
+      transition: all 0.2s ease-in-out !important;
+    }
+    .gradio-container button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
     }
     """
-    
+
     with gr.Blocks(
         title="AI 부동산 법률 비서",
         css=css,
-        theme=gr.themes.Soft(
-            primary_hue="blue",
-            secondary_hue="indigo"
-        )
+        theme=gr.themes.Soft(primary_hue="emerald", secondary_hue="blue")
     ) as interface:
-        
-        # 헤더
-        with gr.Row():
-            gr.HTML("""
-            <div class="main-header">
-                <h1>🐢 쉘터 AI 법률 비서 🗯️</h1>
-                <p>부동산 계약서를 안전하게 분석하고, 법률 전문가의 조언을 받아보세요!</p>
-            </div>
-            """)
-        
-        with gr.Row(equal_height=True):
-            # 왼쪽 컬럼: 파일 분석
-            with gr.Column(scale=1, min_width=400):
-                gr.Markdown("## 📋 계약서 분석")
-                
-                # 파일 업로드 (항상 표시)
-                file_input = gr.File(
-                    label="📁 계약서 파일을 업로드하세요",
-                    file_types=[".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx", ".hwp", ".txt"],
-                    type="filepath"
-                )
-                
-                with gr.Row():
-                    analyze_btn = gr.Button("🔍 분석 시작", variant="primary", size="lg")
-                    clear_btn = gr.Button("🗑️ 초기화", variant="secondary")
-                
-                # 분석 결과 (항상 표시)
-                analysis_output = gr.Markdown(
-                    value="📤 파일을 업로드하고 **분석 시작** 버튼을 클릭하세요.",
-                    line_breaks=True
-                )
-                
-                # 분석 결과 번역 및 음성 기능
-                gr.Markdown("### 🌍 분석 결과 번역 & 음성")
-                with gr.Row():
-                    analysis_translate_lang = gr.Dropdown(
-                        choices=["원본", "EN", "JA", "ZH", "UK", "VI"],
-                        label="번역할 언어",
-                        value="원본"
+        gr.HTML(f"""
+        <div class="main-header">
+            <h1>🐢 AI 부동산 법률 비서</h1>
+            <p>부동산 계약서의 숨은 위험을 찾아내고, 당신의 소중한 자산을 지켜드립니다.</p>
+        </div>
+        """)
+
+        with gr.Row(equal_height=False):
+            # 왼쪽: 파일 분석
+            with gr.Column(scale=6, min_width=500):
+                with gr.Group():
+                    gr.Markdown("## 📋 계약서 분석")
+                    file_input = gr.File(
+                        label="📁 계약서 파일을 업로드하세요",
+                        file_types=[".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx", ".hwp", ".txt"],
+                        type="filepath"
                     )
-                    analysis_speech_lang = gr.Dropdown(
-                        choices=["한국어", "영어", "일본어", "중국어"],
-                        label="음성 언어",
-                        value="한국어"
-                    )
+                    with gr.Row():
+                        analyze_btn = gr.Button("🔍 분석 시작", variant="primary", scale=3)
+                        clear_btn = gr.Button("🗑️ 초기화", variant="secondary", scale=1)
                 
-                with gr.Row():
-                    analysis_translate_btn = gr.Button("🌍 번역하기")
-                    analysis_speech_btn = gr.Button("🔊 음성 생성")
-                
-                analysis_translation_output = gr.Textbox(
-                    label="번역된 분석 결과",
-                    lines=5,
-                    max_lines=15,
-                    show_copy_button=True
-                )
-                
-                analysis_speech_status = gr.Textbox(label="음성 상태", interactive=False)
-                analysis_audio_output = gr.Audio(label="분석 결과 음성", type="filepath")
-            
-            # 오른쪽 컬럼: AI 채팅
-            with gr.Column(scale=1, min_width=400):
-                gr.Markdown("## 🤖 AI 법률 비서")
-                
-                chatbot = gr.Chatbot(
-                    value=[("안녕하세요!", "안녕하세요! 부동산 관련 질문이 있으시면 언제든 물어보세요. 보증금, 전세, 월세, 계약서 작성 등 다양한 주제로 도움드릴 수 있습니다!")],
-                    height=400,
-                    show_label=False,
-                    container=False,
-                    show_copy_button=True
-                )
-                
-                with gr.Row():
-                    msg_input = gr.Textbox(
-                        placeholder="부동산 관련 질문을 입력하세요... (예: 보증금 반환 조건은?)",
-                        scale=4,
-                        show_label=False,
-                        container=False
-                    )
-                    send_btn = gr.Button("📤", scale=1, variant="primary")
-                
-                # 채팅 답변 번역 및 음성 기능
-                gr.Markdown("### 🌍 채팅 답변 번역 & 음성")
-                with gr.Row():
-                    chat_translate_lang = gr.Dropdown(
-                        choices=["원본", "EN", "JA", "ZH", "UK", "VI"],
-                        label="번역할 언어",
-                        value="원본"
-                    )
-                    chat_speech_lang = gr.Dropdown(
-                        choices=["한국어", "영어", "일본어", "중국어"],
-                        label="음성 언어",
-                        value="한국어"
-                    )
-                
-                with gr.Row():
-                    chat_translate_btn = gr.Button("🌍 최근 답변 번역")
-                    chat_speech_btn = gr.Button("🔊 최근 답변 음성")
-                
-                chat_translation_output = gr.Textbox(
-                    label="번역된 채팅 답변",
-                    lines=3,
-                    max_lines=10,
-                    show_copy_button=True
-                )
-                
-                chat_speech_status = gr.Textbox(label="음성 상태", interactive=False)
-                chat_audio_output = gr.Audio(label="채팅 답변 음성", type="filepath")
-                
-                gr.Examples(
-                    examples=[
-                        "전세 계약 시 주의사항은?",
-                        "보증금 반환을 위한 조건은?",
-                        "월세 계약과 전세 계약의 차이점은?",
-                        "계약서에 반드시 포함되어야 할 내용은?",
-                        "임대인 신원 확인 방법은?"
-                    ],
-                    inputs=msg_input,
-                    label="💡 질문 예시"
-                )
-        
-        # 🔥 상태 관리 (수정된 부분)
+                with gr.Group():
+                    gr.Markdown("### 🌍 번역, 🔊 음성, 📸 PNG 저장")
+                    with gr.Row():
+                        analysis_translate_lang = gr.Dropdown(choices=["원본", "EN", "JA", "ZH", "UK", "VI"], label="언어 선택", value="원본")
+                        analysis_speech_lang = gr.Dropdown(choices=["한국어", "영어", "일본어", "중국어"], label="음성 언어", value="한국어")
+                    with gr.Row():
+                        analysis_translate_btn = gr.Button("🌍 번역하기")
+                        analysis_speech_btn = gr.Button("🔊 음성 생성")
+                        analysis_image_btn = gr.Button("📸 PNG 저장", variant="secondary")
+
+                    # 번역 결과를 HTML로 표시하도록 변경
+                    analysis_translation_output = gr.HTML(label="번역된 분석 결과", visible=True)
+                    with gr.Row():
+                        analysis_audio_output = gr.Audio(label="분석 결과 음성", type="filepath")
+                        analysis_speech_status = gr.Textbox(label="음성 상태", interactive=False)
+                    analysis_image_download = gr.File(label="📸 생성된 리포트 PNG", visible=True)
+
+            # 오른쪽: 채팅 및 보고서
+            with gr.Column(scale=7, min_width=600):
+                gr.Markdown("## 🤖 AI 법률 상담 & 분석 결과")
+                with gr.Tabs() as tabs:
+                    with gr.TabItem("📊 분석 보고서", id=0):
+                        analysis_output_html = gr.HTML(
+                           value="<div style='display:flex; justify-content:center; align-items:center; height:400px; border: 2px dashed #e5e7eb; border-radius: 20px;'><p style='color:#6b7280;'>📤 파일을 업로드하고 <b>[🔍 분석 시작]</b> 버튼을 클릭하세요.</p></div>"
+                        )
+                    
+                    with gr.TabItem("💬 실시간 상담", id=1):
+                        chatbot = gr.Chatbot(
+                            elem_classes=["chatbot"],
+                            value=[(None, "안녕하세요! 부동산 관련 질문이 있으시면 언제든 물어보세요.")],
+                            height=500, show_label=False, container=True, show_copy_button=True,
+                            bubble_full_width=False,
+                        )
+                        msg_input = gr.Textbox(placeholder="부동산 관련 질문을 입력하세요...", show_label=False, container=False)
+                        send_btn = gr.Button("📤 전송", variant="primary")
+                        gr.Examples(
+                            ["전세 계약 시 주의사항은?", "보증금 반환을 위한 조건은?", "월세 계약과 전세 계약의 차이점은?"],
+                            inputs=msg_input, label="💡 질문 예시"
+                        )
+                        with gr.Accordion("🌍 채팅 답변 부가기능", open=False):
+                            with gr.Row():
+                                chat_translate_lang = gr.Dropdown(choices=["원본", "EN", "JA", "ZH", "UK", "VI"], label="번역 언어", value="원본")
+                                chat_speech_lang = gr.Dropdown(choices=["한국어", "영어", "일본어", "중국어"], label="음성 언어", value="한국어")
+                            with gr.Row():
+                                chat_translate_btn = gr.Button("🌍 번역")
+                                chat_speech_btn = gr.Button("🔊 음성")
+                                chat_image_btn = gr.Button("📸 PNG 저장")
+                            # 채팅 번역 결과도 HTML로 표시
+                            chat_translation_output = gr.HTML(label="번역된 답변", visible=True)
+                            chat_audio_output = gr.Audio(label="답변 음성", type="filepath")
+                            chat_speech_status = gr.Textbox(label="음성 상태", interactive=False)
+                            chat_image_download = gr.File(label="📸 답변 PNG", visible=True)
+
+        # 상태 관리
         extracted_text = gr.State("")
-        analysis_report = gr.State("")  # 분석 리포트 저장용
+        analysis_report_md = gr.State("")
+        analysis_report_html_state = gr.State("")
         last_chat_response = gr.State("")
-        
-        # 🔥 이벤트 핸들러 (수정된 부분)
+
+        # 번역 함수 (HTML 포함)
+        def translate_analysis_with_html(report_md, lang):
+            if not report_md.strip():
+                return "<div style='padding: 20px; text-align: center; color: #6b7280;'>번역할 분석 결과가 없습니다.</div>"
+            if lang == "원본":
+                return create_translated_html(report_md, "원본 분석 결과")
+            translated = deepl_translate_text(report_md, lang)
+            lang_names = {"EN": "영어", "JA": "일본어", "ZH": "중국어", "UK": "우크라이나어", "VI": "베트남어"}
+            title = f"{lang_names.get(lang, lang)} 번역 결과"
+            return create_translated_html(translated, title)
+
+        def translate_chat_with_html(last_resp, lang):
+            if not last_resp.strip():
+                return "<div style='padding: 20px; text-align: center; color: #6b7280;'>번역할 답변이 없습니다.</div>"
+            if lang == "원본":
+                return create_translated_html(last_resp, "원본 답변")
+            translated = deepl_translate_text(last_resp, lang)
+            lang_names = {"EN": "영어", "JA": "일본어", "ZH": "중국어", "UK": "우크라이나어", "VI": "베트남어"}
+            title = f"{lang_names.get(lang, lang)} 번역 답변"
+            return create_translated_html(translated, title)
+
+        # 이벤트 핸들러
         def clear_all():
-            return (None, "📤 파일을 업로드하고 **분석 시작** 버튼을 클릭하세요.", 
-                   "", "", None, "", "", None, "", "", "")
-        
-        def analyze_and_store_report(file):
-            """계약서 분석하고 리포트 저장"""
-            if file is None:
-                return "❌ 파일을 업로드해주세요.", "", ""
-            
-            # 기존 분석 함수 호출
-            report, text = analyze_contract(file)
-            return report, text, report  # 리포트를 별도로 저장
-        
+            empty_html = "<div style='display:flex; justify-content:center; align-items:center; height:400px; border: 2px dashed #e5e7eb; border-radius: 20px;'><p style='color:#6b7280;'>📤 파일을 업로드하고 <b>[🔍 분석 시작]</b> 버튼을 클릭하세요.</p></div>"
+            empty_translation = "<div style='padding: 20px; text-align: center; color: #6b7280;'>번역할 내용이 없습니다.</div>"
+            return (
+                None, empty_html, empty_translation, None, "", 
+                [(None, "안녕하세요! 부동산 관련 질문이 있으시면 언제든 물어보세요.")], 
+                None, "", "", empty_translation, "", None, None, None, gr.update(selected=0)
+            )
+
+        def analyze_and_store_report(file, progress=gr.Progress(track_tqdm=True)):
+            html_report, text, md_report, html_pretty = analyze_contract(file, progress)
+            return html_report, text, md_report, html_pretty, gr.update(selected=0)
+
         def store_chat_response(message, history):
-            """채팅 응답을 저장하고 반환"""
-            if not message.strip():
-                return history, "", ""
-            
-            # 새로운 응답 생성
-            new_history, _ = chat_with_ai(message, history)
-            
-            # 마지막 AI 응답만 추출 (사용자 입력 제외)
-            if new_history and len(new_history) > 0:
-                last_response = new_history[-1][1]  # AI의 답변 부분
-            else:
-                last_response = ""
-                
-            return new_history, "", last_response
+            new_history, last_resp = chat_with_ai(message, history)
+            return new_history, "", last_resp
         
-        # 파일 분석 (리포트 저장 포함)
+        def generate_analysis_speech(report_md, lang, translate_lang):
+            if not report_md.strip():
+                return None, "분석 결과가 없습니다."
+            speech_text = report_md
+            if translate_lang != "원본":
+                translated_output = deepl_translate_text(report_md, translate_lang)
+                if "번역 오류" not in translated_output:
+                    speech_text = translated_output
+            return google_text_to_speech(speech_text, {"한국어": "KO", "영어": "EN", "일본어": "JA", "중국어": "ZH"}.get(lang, "KO"))
+
+        def save_analysis_png(report_html):
+            if not report_html:
+                return None
+            return html_to_png_downloadable(report_html, filename_prefix="analysis_report")
+
+        def generate_chat_speech(last_resp, lang, translate_lang):
+            if not last_resp.strip():
+                return None, "채팅 답변이 없습니다."
+            speech_text = last_resp
+            if translate_lang != "원본":
+                 translated_output = deepl_translate_text(last_resp, translate_lang)
+                 if "번역 오류" not in translated_output:
+                     speech_text = translated_output
+            return google_text_to_speech(speech_text, {"한국어": "KO", "영어": "EN", "일본어": "JA", "중국어": "ZH"}.get(lang, "KO"))
+
+        def save_chat_png(last_resp):
+            if not last_resp.strip():
+                return None
+            html = wrap_chat_html(last_resp, title="🤖 AI 답변")
+            return html_to_png_downloadable(html, filename_prefix="chat_response")
+        
+        # 바인딩
         analyze_btn.click(
             fn=analyze_and_store_report,
             inputs=[file_input],
-            outputs=[analysis_output, extracted_text, analysis_report]
+            outputs=[analysis_output_html, extracted_text, analysis_report_md, analysis_report_html_state, tabs]
         )
-        
-        # 초기화
+
         clear_btn.click(
             fn=clear_all,
-            outputs=[file_input, analysis_output, analysis_translation_output, 
-                    analysis_speech_status, analysis_audio_output,
-                    chat_translation_output, chat_speech_status, chat_audio_output, 
-                    msg_input, extracted_text, analysis_report]
+            outputs=[
+                file_input, analysis_output_html, analysis_translation_output, analysis_audio_output,
+                analysis_speech_status, chatbot, chat_audio_output, chat_speech_status,
+                msg_input, chat_translation_output, extracted_text, analysis_report_md,
+                analysis_image_download, chat_image_download, last_chat_response, tabs
+            ]
         )
-        
-        # 🔥 분석 결과(리포트) 번역 - 수정된 부분
+
         analysis_translate_btn.click(
-            fn=lambda report, lang: translate_text(report, lang) if lang != "원본" and report else ("번역할 분석 결과가 없습니다." if not report else report),
-            inputs=[analysis_report, analysis_translate_lang],
+            fn=translate_analysis_with_html, 
+            inputs=[analysis_report_md, analysis_translate_lang], 
             outputs=[analysis_translation_output]
         )
-        
-        # 🔥 분석 결과(리포트) 음성 생성 - 수정된 부분
-        def generate_analysis_speech(report, lang, translate_lang):
-            if not report.strip():
-                return None, "분석 결과가 없습니다."
-            
-            # 번역이 필요한 경우
-            if translate_lang != "원본":
-                translated = translate_text(report, translate_lang)
-                speech_text = translated
-            else:
-                speech_text = report
-            
-            return generate_speech(speech_text, lang)
-        
         analysis_speech_btn.click(
-            fn=generate_analysis_speech,
-            inputs=[analysis_report, analysis_speech_lang, analysis_translate_lang],
+            fn=generate_analysis_speech, 
+            inputs=[analysis_report_md, analysis_speech_lang, analysis_translate_lang], 
             outputs=[analysis_audio_output, analysis_speech_status]
         )
-        
-        # 채팅 (응답 저장 포함)
+        analysis_image_btn.click(
+            fn=save_analysis_png, 
+            inputs=[analysis_report_html_state], 
+            outputs=[analysis_image_download]
+        )
+
+        # 채팅 전송 액션
         send_btn.click(
-            fn=store_chat_response,
-            inputs=[msg_input, chatbot],
+            fn=store_chat_response, 
+            inputs=[msg_input, chatbot], 
             outputs=[chatbot, msg_input, last_chat_response]
         )
-        
         msg_input.submit(
-            fn=store_chat_response,
-            inputs=[msg_input, chatbot],
+            fn=store_chat_response, 
+            inputs=[msg_input, chatbot], 
             outputs=[chatbot, msg_input, last_chat_response]
         )
-        
-        # 🔥 채팅 답변 번역 - 수정된 부분
+
         chat_translate_btn.click(
-            fn=lambda response, lang: translate_text(response, lang) if lang != "원본" and response.strip() else ("번역할 답변이 없습니다." if not response.strip() else response),
-            inputs=[last_chat_response, chat_translate_lang],
+            fn=translate_chat_with_html, 
+            inputs=[last_chat_response, chat_translate_lang], 
             outputs=[chat_translation_output]
         )
-        
-        # 🔥 채팅 답변 음성 생성 - 수정된 부분
-        def generate_chat_speech(response, lang, translate_lang):
-            if not response.strip():
-                return None, "채팅 답변이 없습니다."
-            
-            # 번역이 필요한 경우
-            if translate_lang != "원본":
-                translated = translate_text(response, translate_lang)
-                speech_text = translated
-            else:
-                speech_text = response
-            
-            return generate_speech(speech_text, lang)
-        
         chat_speech_btn.click(
-            fn=generate_chat_speech,
-            inputs=[last_chat_response, chat_speech_lang, chat_translate_lang],
+            fn=generate_chat_speech, 
+            inputs=[last_chat_response, chat_speech_lang, chat_translate_lang], 
             outputs=[chat_audio_output, chat_speech_status]
         )
-    
+        chat_image_btn.click(
+            fn=save_chat_png, 
+            inputs=[last_chat_response], 
+            outputs=[chat_image_download]
+        )
+
     return interface
 
-# 🚀 메인 실행부
+
+# 메인함수
 def main():
-    """메인 실행 함수"""
-    print("🚀 AI 부동산 법률 비서를 시작합니다...")
-    print("📋 기능 목록:")
-    print("  - 📄 계약서 파일 분석 (PDF, 이미지, 문서)")
-    print("  - 🤖 AI 법률 상담 챗봇 (실제 API 연동)")
-    print("  - 🌍 분석결과 & 채팅답변 번역 (DeepL)")
-    print("  - 🔊 분석결과 & 채팅답변 음성변환 (Google TTS)")
-    print("  - 📊 계약서 위험도 분석")
-    print()
-    
+    print("🐢🐢🐢🐢 AI 부동산 법률 비서를 시작합니다...")
     try:
-        # 인터페이스 생성 및 실행
         app = create_interface()
-        
-        print("✅ 인터페이스 생성 완료!")
-        print("🌐 웹 브라우저에서 자동으로 열립니다...")
-        print("🔗 수동 접속: http://localhost:7860")
-        print()
-        print("💡 사용 팁:")
-        print("  1. 왼쪽에서 계약서 파일을 업로드하고 분석하세요")
-        print("  2. 분석 결과를 번역하고 음성으로 들어보세요")
-        print("  3. 오른쪽에서 AI와 채팅할 수 있습니다")
-        print("  4. 채팅 답변도 번역하고 음성으로 들어보세요")
-        print("  5. Ctrl+C로 종료할 수 있습니다")
-        print()
-        
-        # 서버 시작
-        app.launch(
-            server_name="0.0.0.0",  # 모든 IP에서 접속 가능
-            server_port=7860,       # 포트 설정
-            share=False,            # 공개 링크 생성 안함 (로컬 테스트용)
-            debug=True,             # 디버그 모드
-            show_error=True,        # 오류 표시
-            quiet=False,            # 로그 출력
-            inbrowser=True          # 자동으로 브라우저 열기
-        )
-        
-    except KeyboardInterrupt:
-        print("\n👋 사용자가 서버를 중단했습니다.")
-        print("🛑 서버를 안전하게 종료합니다...")
-        
+        print("✅ 인터페이스 생성 완료")
+        # 'share'를 True로 바꾸면 외부에서 접속 가능한 공개 URL이 생성됩니다.
+        app.launch(server_name="0.0.0.0", server_port=7860, share=True)
     except Exception as e:
         print(f"❌ 서버 시작 중 오류 발생: {e}")
-        print("🔧 다음을 확인해보세요:")
-        print("  1. 필요한 패키지가 모두 설치되었는지")
-        print("  2. 포트 7860이 사용 중인지")
-        print("  3. 방화벽 설정이 차단하고 있는지")
 
 if __name__ == "__main__":
     main()
