@@ -20,13 +20,40 @@ from langchain_upstage import (
     UpstageDocumentParseLoader,
     UpstageEmbeddings,
     ChatUpstage,
+    UpstageGroundednessCheck,
 )
+from operator import itemgetter
 from langchain_community.vectorstores import Chroma
 from langchain_core.documents import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables import RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
+
+# Groundedness 체크용 컨텍스트 직렬화 유틸
+def docs_to_text(docs):
+    try:
+        return "\n\n---\n\n".join(getattr(d, "page_content", str(d)) for d in docs)
+    except Exception:
+        return str(docs)
+
+# Groundedness 컨텍스트 빌더: 검색 컨텍스트 + 계약/질문 원문 결합
+def build_grounded_context_for_contract(contract_text: str) -> str:
+    try:
+        retrieved = RETRIEVER.invoke(contract_text) if RETRIEVER else []
+    except Exception:
+        retrieved = []
+    retrieved_text = docs_to_text(retrieved)
+    return f"[참고 자료]\n{retrieved_text}\n\n[계약서]\n{contract_text}"
+
+def build_grounded_context_for_question(question_text: str) -> str:
+    try:
+        retrieved = RETRIEVER.invoke(question_text) if RETRIEVER else []
+    except Exception:
+        retrieved = []
+    retrieved_text = docs_to_text(retrieved)
+    return f"[참고 자료]\n{retrieved_text}\n\n[질문]\n{question_text}"
 
 # 선택 의존성 (HTML -> PNG 변환용)
 HTML2IMAGE_AVAILABLE = False
@@ -513,8 +540,10 @@ DEFAULT_EMBED_CSS = """
     width: 100%;
     border-collapse: collapse;
     margin: 1rem 0;
-    table-layout: fixed;
 }
+.report-section table { table-layout: fixed; }
+.translation-content table { table-layout: auto; }
+.translation-content .table-wrapper { overflow-x: auto; }
 .report-section th, .report-section td, .translation-content th, .translation-content td {
     border: 1px solid var(--border);
     padding: 8px 12px;
@@ -622,7 +651,16 @@ def md_to_html(md_text: str) -> str:
                 pass
     
     # 폴백: 기본 마크다운 파싱 (향상된 버전)
-    html = md_text
+    # 전각 기호 정규화: ｜(U+FF5C), －(U+FF0D) 등을 ASCII로 변환해 테이블/수평선 인식 개선
+    html = (
+        md_text
+        .replace('｜', '|')
+        .replace('￨', '|')
+        .replace('－', '-')
+        .replace('﹣', '-')
+        .replace('—', '-')
+        .replace('–', '-')
+    )
     
     # 코드 블록 처리 (``` 구문)
     html = re.sub(r'```(\w+)?\n(.*?)\n```', r'<pre><code>\2</code></pre>', html, flags=re.DOTALL)
@@ -647,10 +685,12 @@ def md_to_html(md_text: str) -> str:
     # 링크 처리
     html = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2" target="_blank">\1</a>', html)
     
-    # 리스트 처리 (개선된 버전)
+    # 리스트/테이블 처리 (개선된 버전)
     lines = html.split('\n')
     in_ul = False
     in_ol = False
+    # 간단한 테이블 감싸기: 파이프가 포함된 줄이 연속되면 table-wrapper로 감싸기
+    in_table = False
     result_lines = []
     
     for line in lines:
@@ -676,6 +716,14 @@ def md_to_html(md_text: str) -> str:
                 in_ul = True
             content = re.sub(r'^[-*+]\s+', '', stripped)
             result_lines.append(f'<li>{content}</li>')
+        elif '|' in stripped and not stripped.startswith('http'):
+            # 테이블 라인
+            if not in_table:
+                result_lines.append('<div class="table-wrapper">')
+                result_lines.append('<table>')
+                in_table = True
+            # 마크다운 테이블의 구분선 라인은 그대로 둠
+            result_lines.append(f'<tr><td>{stripped}</td></tr>')
         else:
             # 리스트 종료
             if in_ul:
@@ -684,6 +732,10 @@ def md_to_html(md_text: str) -> str:
             if in_ol:
                 result_lines.append('</ol>')
                 in_ol = False
+            if in_table:
+                result_lines.append('</table>')
+                result_lines.append('</div>')
+                in_table = False
             result_lines.append(line)
     
     # 남은 리스트 태그 정리
@@ -691,6 +743,9 @@ def md_to_html(md_text: str) -> str:
         result_lines.append('</ul>')
     if in_ol:
         result_lines.append('</ol>')
+    if in_table:
+        result_lines.append('</table>')
+        result_lines.append('</div>')
     
     html = '\n'.join(result_lines)
     
@@ -908,16 +963,16 @@ def create_clean_report_image(report_text: str, report_type: str = "report", lan
     # 푸터 공간
     current_y += 30
     footer_text = "본 분석은 참고용이며 법적 효력이 없습니다. 중요한 결정 전 반드시 전문가와 상담하시기 바랍니다."
-    if lang_code == 'EN🇺🇸':
+    # lang_code 값 체계(KO/EN/JA/ZH/UK/VI)에 맞춰 현지화
+    if lang_code == 'EN':
         footer_text = "This analysis is for reference only and has no legal effect. Please consult with experts before making important decisions."
-    elif lang_code == 'JA🇯🇵':
+    elif lang_code == 'JA':
         footer_text = "この分析は参考用であり、法的効力はありません。重要な決定の前に必ず専門家にご相談ください。"
-    elif lang_code == 'ZH🇨🇳':
+    elif lang_code == 'ZH':
         footer_text = "本分析仅供参考，不具有法律效力。在做出重要决定之前，请务必咨询专家。"
-    # ### NEW: 우크라이나어, 베트남어 푸터 추가
-    elif lang_code == 'UK🇺🇦':
+    elif lang_code == 'UK':
         footer_text = "Цей аналіз призначений лише для ознайомлення та не має юридичної сили. Проконсультуйтеся з експертами перед прийняттям важливих рішень."
-    elif lang_code == 'VI🇻🇳':
+    elif lang_code == 'VI':
         footer_text = "Phân tích này chỉ mang tính tham khảo và không có hiệu lực pháp lý. Vui lòng tham khảo ý kiến chuyên gia trước khi đưa ra quyết định quan trọng."
 
     lines.append(('footer', footer_text, current_y))
@@ -1076,9 +1131,12 @@ def perform_ai_analysis(contract_text: str) -> dict:
         return {"analysis": "⚠️ AI 분석 엔진(RAG)이 초기화되지 않았습니다. 프로그램을 다시 시작하거나 설정을 확인해주세요."}
     
     try:
-        # RAG 체인 구성 (assistant_cli.py와 동일한 로직)
+        # 1) Groundedness Check 객체 생성
+        groundedness_checker = UpstageGroundednessCheck()
+
+        # 2) 프롬프트 정의
         prompt = ChatPromptTemplate.from_template(
-            """당신은 한국 부동산 법률 전문가입니다. 주어진 [참고 자료]를 바탕으로 다음 [계약서]를 분석하고, 임차인에게 불리하거나 누락된 조항이 없는지 상세히 설명해주세요. 답변은 마크다운 형식으로 명확하게 정리해주세요.
+            """당신은 한국 부동산 법률 전문가입니다. 주어진 [참고 자료]를 바탕으로 다음 [계약서]를 분석하고, 임차인에게 불리하거나 누락된 조항이 없는지 상세히 설명해주세요. 답변은 마크다운 형식으로 명확하게 정리해주세요. 각 주장/근거에는 [참고 자료]나 [계약서]의 관련 문구를 한두 문장으로 간략히 인용하고 따옴표로 표시하세요.
 
 [참고 자료]
 {context}
@@ -1093,20 +1151,55 @@ def perform_ai_analysis(contract_text: str) -> dict:
 4.  **종합적인 법률 자문**: 계약 전반에 대한 종합적인 의견과 추가적으로 확인해야 할 사항(등기부등본 확인 등)을 알려주세요.
 """
         )
-        
-        rag_chain = (
+
+        # 3) context 텍스트화 유틸
+        def docs_to_text(docs):
+            try:
+                return "\n\n---\n\n".join(getattr(d, "page_content", str(d)) for d in docs)
+            except Exception:
+                return str(docs)
+
+        # 4) 답변 생성 체인 (출력에 근거 인용 유도)
+        chain = (
             {
-                "context": RETRIEVER,
+                "context": RETRIEVER | RunnableLambda(docs_to_text),
                 "contract": RunnablePassthrough()
             }
             | prompt
             | ChatUpstage(model="solar-pro")
             | StrOutputParser()
         )
-        
-        analysis_result = rag_chain.invoke(contract_text)
+
+        # 5) RAG 답변과 Groundedness Check 병행 체인
+        rag_chain_with_check = RunnablePassthrough.assign(
+            context=itemgetter("contract") | RunnableLambda(build_grounded_context_for_contract),
+            answer=itemgetter("contract") | chain
+        ).assign(
+            groundedness=groundedness_checker
+        )
+
+        # 5) 실행 및 터미널 출력
+        result_dict = rag_chain_with_check.invoke({"contract": contract_text})
+        analysis_result = result_dict.get("answer", "")
+        groundedness_result = result_dict.get("groundedness", None)
+
+        print("\n" + "="*50)
+        print("🕵️  [계약서 분석] Groundedness Check 결과 (터미널 전용)")
+        if isinstance(groundedness_result, dict):
+            score = groundedness_result.get("binary_score") or groundedness_result.get("score") or groundedness_result.get("result")
+            reason = groundedness_result.get("reason") or groundedness_result.get("explanation")
+        else:
+            # 객체나 문자열 등 다양한 형태 방어적 처리
+            score = getattr(groundedness_result, "binary_score", str(groundedness_result))
+            reason = getattr(groundedness_result, "reason", "")
+        print(f" - 사실 기반 점수: {score} ({'근거 있음' if str(score).lower().strip() == 'grounded' else '근거 없음'})")
+        if reason:
+            print(f" - 이유: {reason}")
+        print("="*50 + "\n")
+
         return {"analysis": analysis_result}
     except Exception as e:
+        print(f"❌ Groundedness Check 또는 AI 분석 중 오류: {e}")
         return {"analysis": f"❌ AI 분석 중 오류 발생: {e}"}
 
 def deepl_translate_text(text, target_lang):
@@ -1224,7 +1317,10 @@ def convert_emoji_to_text(text: str) -> str:
         '🚨': '[경고]', '⚠️': '[주의]', '✅': '[확인]', '💡': '[아이디어]',
         '🕵️': '[탐정]', '🌐': '[지구]', '🎧': '[헤드폰]', '📸': '[카메라]',
         '🗑️': '[휴지통]', '📤': '[업로드]', '🏢': '[빌딩]', '📝': '[메모]',
-        '🧠': '[뇌]', '👍': '[좋아요]', '❌': '[X]', '⭐': '[별]'
+        '🧠': '[뇌]', '👍': '[좋아요]', '❌': '[X]', '⭐': '[별]',
+        '📎': '[클립]', '🔗': '[링크]', '📌': '[핀]', '🧾': '[영수증]',
+        '📘': '[파란책]', '📙': '[주황책]', '📗': '[초록책]', '📕': '[빨간책]',
+        '🔥': '[불]', '✨': '[반짝임]', '📈': '[상승차트]', '📉': '[하락차트]'
     }
     
     for emoji, text_replacement in emoji_map.items():
@@ -1256,7 +1352,7 @@ def detect_language_code(text: str, translate_lang: str) -> str:
     else:
         return translate_lang
 
-def html_to_png_downloadable(html_content: str, filename_prefix="report_html"):
+def html_to_png_downloadable(html_content: str, filename_prefix="report_html", lang_code_override: str | None = None):
     """HTML을 PNG로 저장 - 순수 텍스트만 추출하여 깔끔하게 저장"""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     
@@ -1266,19 +1362,22 @@ def html_to_png_downloadable(html_content: str, filename_prefix="report_html"):
     # 이모지를 텍스트로 변환
     clean_text = convert_emoji_to_text(clean_text)
     
-    # 언어 감지 (번역 내용인지 확인)
-    lang_code = 'KO'
-    # 번역 결과에 포함된 언어명을 기반으로 언어 코드 설정
-    if any(keyword in clean_text for keyword in ['Translation Result', 'English']):
-        lang_code = 'EN'
-    elif any(keyword in clean_text for keyword in ['翻訳結果', '日本語']):
-        lang_code = 'JA'
-    elif any(keyword in clean_text for keyword in ['翻译结果', '中文']):
-        lang_code = 'ZH'
-    elif any(keyword in clean_text for keyword in ['Результат перекладу']):
-        lang_code = 'UK'
-    elif any(keyword in clean_text for keyword in ['Kết quả dịch']):
-        lang_code = 'VI'
+    # 언어 감지 (또는 호출부에서 override)
+    if lang_code_override:
+        lang_code = lang_code_override
+    else:
+        lang_code = 'KO'
+        # 번역 결과에 포함된 언어명을 기반으로 언어 코드 설정
+        if any(keyword in clean_text for keyword in ['Translation Result', 'English']):
+            lang_code = 'EN'
+        elif any(keyword in clean_text for keyword in ['翻訳結果', '日本語']):
+            lang_code = 'JA'
+        elif any(keyword in clean_text for keyword in ['翻译结果', '中文']):
+            lang_code = 'ZH'
+        elif any(keyword in clean_text for keyword in ['Результат перекладу']):
+            lang_code = 'UK'
+        elif any(keyword in clean_text for keyword in ['Kết quả dịch']):
+            lang_code = 'VI'
     
     # PIL로 깔끔한 이미지 생성
     img = create_clean_report_image(clean_text, filename_prefix, lang_code)
@@ -1341,7 +1440,7 @@ def analyze_contract(file, progress=gr.Progress(track_tqdm=True)):
         return f"❌ 분석 중 오류 발생: {str(e)}", "", "", ""
 
 def chat_with_ai(message, history):
-    """RAG를 사용하여 법률 상담 채팅을 진행합니다."""
+    """RAG와 Groundedness Check를 사용하여 법률 상담 채팅을 진행합니다."""
     if not message.strip():
         return history, ""
     
@@ -1352,9 +1451,12 @@ def chat_with_ai(message, history):
         return history, ""
 
     try:
-        # RAG 체인 구성
+        # 1) Groundedness Check 객체 생성
+        groundedness_checker = UpstageGroundednessCheck()
+
+        # 2) 프롬프트 정의
         prompt = ChatPromptTemplate.from_template(
-            """당신은 한국 부동산 법률 전문가입니다. 주어진 [참고 자료]를 바탕으로 사용자의 [질문]에 대해 친절하고 상세하게 답변해주세요. 답변은 마크다운 형식으로 명확하게 정리해주세요. 법적 효력이 없음을 명시하고 전문가 상담을 권유하는 내용을 포함해주세요.
+            """당신은 한국 부동산 법률 전문가입니다. 주어진 [참고 자료]를 바탕으로 사용자의 [질문]에 대해 친절하고 상세하게 답변해주세요. 답변은 마크다운 형식으로 명확하게 정리해주세요. 법적 효력이 없음을 명시하고 전문가 상담을 권유하는 내용을 포함해주세요. 답변은 곧바로 핵심 내용부터 시작하고, RAG/참고 자료를 언급하는 서문이나 메타 문구(예: '주어진 [참고 자료]와 관련 법률을 바탕으로 답변드립니다')는 절대 포함하지 마세요. 각 핵심 주장마다 관련 [참고 자료]나 조문/문구를 한두 문장으로 간략히 인용하고 따옴표로 표시하세요.
 
 [참고 자료]
 {context}
@@ -1364,9 +1466,10 @@ def chat_with_ai(message, history):
 """
         )
 
-        rag_chain = (
+        # 3) 답변 생성 체인 (출력에 근거 인용 유도)
+        chain = (
             {
-                "context": RETRIEVER,
+                "context": RETRIEVER | RunnableLambda(docs_to_text),
                 "question": RunnablePassthrough()
             }
             | prompt
@@ -1374,7 +1477,32 @@ def chat_with_ai(message, history):
             | StrOutputParser()
         )
 
-        response = rag_chain.invoke(message)
+        # 4) RAG 답변과 Groundedness Check 병행
+        rag_chain_with_check = RunnablePassthrough.assign(
+            context=itemgetter("question") | RunnableLambda(build_grounded_context_for_question),
+            answer=itemgetter("question") | chain
+        ).assign(
+            groundedness=groundedness_checker
+        )
+
+        # 5) 실행 및 터미널 출력
+        result_dict = rag_chain_with_check.invoke({"question": message})
+        response = result_dict.get("answer", "")
+        groundedness_result = result_dict.get("groundedness", None)
+
+        print("\n" + "="*50)
+        print("💬 [실시간 상담] Groundedness Check 결과 (터미널 전용)")
+        if isinstance(groundedness_result, dict):
+            score = groundedness_result.get("binary_score") or groundedness_result.get("score") or groundedness_result.get("result")
+            reason = groundedness_result.get("reason") or groundedness_result.get("explanation")
+        else:
+            score = getattr(groundedness_result, "binary_score", str(groundedness_result))
+            reason = getattr(groundedness_result, "reason", "")
+        print(f" - 사실 기반 점수: {score} ({'근거 있음' if str(score).lower().strip() == 'grounded' else '근거 없음'})")
+        if reason:
+            print(f" - 이유: {reason}")
+        print("="*50 + "\n")
+
         history.append((message, response))
         return history, response
     except Exception as e:
@@ -1485,46 +1613,46 @@ def create_interface():
                     analyze_btn = gr.Button("🔍 분석 시작", variant="primary", size="lg")
                     clear_btn = gr.Button("🗑️ 초기화", variant="secondary")
                 
-                gr.Markdown("### 🌐 번역, 🎧 음성, 📁 PNG 저장")
-                with gr.Row():
-                    analysis_translate_lang = gr.Dropdown(
-                        choices=[
-                            ("원본", "원본"),
-                            ("영어 🇺🇸", "EN"),
-                            ("일본어 🇯🇵", "JA"),
-                            ("중국어 🇨🇳", "ZH"),
-                            ("우크라이나어 🇺🇦", "UK"),
-                            ("베트남어 🇻🇳", "VI")
-                        ],
-                        label="언어 선택",
-                        value="원본"
-                    )
-                    analysis_speech_lang = gr.Dropdown(
-                        choices=[
-                            ("한국어 🇰🇷", "KO"),
-                            ("영어 🇺🇸", "EN"),
-                            ("일본어 🇯🇵", "JA"),
-                            ("중국어 🇨🇳", "ZH"),
-                            ("우크라이나어 🇺🇦", "UK"),
-                            ("베트남어 🇻🇳", "VI")
-                        ],
-                        label="음성 언어",
-                        value="KO"
-                    )
-                with gr.Row():
-                    analysis_translate_btn = gr.Button("🌎 번역하기", variant="secondary")
-                    analysis_speech_btn = gr.Button("🎧 음성 생성", variant="secondary")
-                    analysis_image_btn = gr.Button("📁 PNG 저장", variant="secondary")
-                    analysis_translate_png_btn = gr.Button("🗂️ 번역 PNG", variant="secondary")
+                with gr.Accordion("🌐 분석 결과 부가기능", open=False):
+                    with gr.Row():
+                        analysis_translate_lang = gr.Dropdown(
+                            choices=[
+                                ("원본", "원본"),
+                                ("영어 🇺🇸", "EN"),
+                                ("일본어 🇯🇵", "JA"),
+                                ("중국어 🇨🇳", "ZH"),
+                                ("우크라이나어 🇺🇦", "UK"),
+                                ("베트남어 🇻🇳", "VI")
+                            ],
+                            label="언어 선택",
+                            value="원본"
+                        )
+                        analysis_speech_lang = gr.Dropdown(
+                            choices=[
+                                ("한국어 🇰🇷", "KO"),
+                                ("영어 🇺🇸", "EN"),
+                                ("일본어 🇯🇵", "JA"),
+                                ("중국어 🇨🇳", "ZH"),
+                                ("우크라이나어 🇺🇦", "UK"),
+                                ("베트남어 🇻🇳", "VI")
+                            ],
+                            label="음성 언어",
+                            value="KO"
+                        )
+                    with gr.Row():
+                        analysis_translate_btn = gr.Button("🌎 번역하기", variant="secondary")
+                        analysis_speech_btn = gr.Button("🎧 음성 생성", variant="secondary")
+                        analysis_image_btn = gr.Button("📁 PNG 저장", variant="secondary")
+                        analysis_translate_png_btn = gr.Button("🗂️ 번역 PNG", variant="secondary")
 
-                # 번역 결과를 HTML로 표시
-                analysis_translation_output = gr.HTML(label="번역된 분석 결과", visible=True)
-                with gr.Row():
-                    analysis_audio_output = gr.Audio(label="분석 결과 음성", type="filepath")
-                    analysis_speech_status = gr.Textbox(label="음성 상태", interactive=False)
-                with gr.Row():
-                    analysis_image_download = gr.File(label="📁 생성된 리포트 PNG", visible=True)
-                    analysis_translate_image_download = gr.File(label="🗂️ 번역 리포트 PNG", visible=True)
+                    # 번역 결과를 HTML로 표시
+                    analysis_translation_output = gr.HTML(label="번역된 분석 결과", visible=True)
+                    with gr.Row():
+                        analysis_audio_output = gr.Audio(label="분석 결과 음성", type="filepath")
+                        analysis_speech_status = gr.Textbox(label="음성 상태", interactive=False)
+                    with gr.Row():
+                        analysis_image_download = gr.File(label="📁 생성된 리포트 PNG", visible=True)
+                        analysis_translate_image_download = gr.File(label="🗂️ 번역 리포트 PNG", visible=True)
 
             # 오른쪽: 채팅 및 보고서
             with gr.Column(scale=6):
@@ -1544,7 +1672,14 @@ def create_interface():
                         msg_input = gr.Textbox(placeholder="부동산 관련 질문을 입력하세요...", show_label=False, container=False)
                         send_btn = gr.Button("📤 전송", variant="primary")
                         gr.Examples(
-                            ["전세 계약 시 주의사항은?", "보증금 반환을 위한 조건은?", "월세 계약과 전세 계약의 차이점은?"],
+                            [
+                                "전세 계약 시 주의사항은 뭔가요?",
+                                "전세집에 하자(곰팡이, 누수 등)가 생기면 어떻게 하나요?",
+                                "집주인이 바뀌면 계약서를 다시 써야 하나요?",
+                                "전세 만기인데 보증금을 못 준다 하면 어떻게 해야 하나요?",
+                                "이 집이 경매에 넘어갔다고 하는데 어떻게 하나요?",
+                                "전세보증보험, 지금이라도 가입하면 보호받을 수 있나요?"
+                            ],
                             inputs=msg_input, label="💡 질문 예시"
                         )
                         with gr.Accordion("🌐 채팅 답변 부가기능", open=False):
@@ -1621,22 +1756,24 @@ def create_interface():
         def save_analysis_translation_png(translated_text, translate_lang):
             if not translated_text.strip():
                 return None
-            lang_code = detect_language_code(translated_text, translate_lang)
-            img = create_clean_report_image(translated_text, "analysis_translation", lang_code)
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            out_path = Path(tempfile.gettempdir()) / f"analysis_translation_{ts}.png"
-            img.save(out_path, format='PNG', quality=95, optimize=True)
-            return str(out_path)
+            # 번역 텍스트를 HTML로 감싸고, HTML→텍스트 정제→PNG 파이프라인 재사용
+            lang_title = {"EN": "영어", "JA": "일본어", "ZH": "중국어", "UK": "우크라이나어", "VI": "베트남어"}
+            html = create_translated_html(translated_text, f"{lang_title.get(translate_lang, translate_lang)} 번역 결과")
+            # 파일명에 언어 코드 포함
+            code = translate_lang if translate_lang in {"EN","JA","ZH","UK","VI"} else "ORIG"
+            # HTML→텍스트 정제 내부에서 이모지 한글 변환(convert_emoji_to_text) 수행됨
+            return html_to_png_downloadable(html, filename_prefix=f"analysis_translation_{code}", lang_code_override=(translate_lang if translate_lang != "원본" else "KO"))
 
         def save_chat_translation_png(translated_text, translate_lang):
             if not translated_text.strip():
                 return None
-            lang_code = detect_language_code(translated_text, translate_lang)
-            img = create_clean_report_image(translated_text, "chat_translation", lang_code)
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            out_path = Path(tempfile.gettempdir()) / f"chat_translation_{ts}.png"
-            img.save(out_path, format='PNG', quality=95, optimize=True)
-            return str(out_path)
+            # 번역 텍스트를 HTML로 감싸고, HTML→텍스트 정제→PNG 파이프라인 재사용
+            lang_title = {"EN": "영어", "JA": "일본어", "ZH": "중국어", "UK": "우크라이나어", "VI": "베트남어"}
+            html = create_translated_html(translated_text, f"{lang_title.get(translate_lang, translate_lang)} 번역 답변")
+            # 파일명에 언어 코드 포함
+            code = translate_lang if translate_lang in {"EN","JA","ZH","UK","VI"} else "ORIG"
+            # HTML→텍스트 정제 내부에서 이모지 한글 변환(convert_emoji_to_text) 수행됨
+            return html_to_png_downloadable(html, filename_prefix=f"chat_translation_{code}", lang_code_override=(translate_lang if translate_lang != "원본" else "KO"))
 
         # 이벤트 핸들러
         def clear_all():
@@ -1794,7 +1931,7 @@ def main():
         # 4. Gradio 인터페이스 생성 및 실행
         app = create_interface()
         print("✅ 인터페이스 생성 완료. 웹서버를 시작합니다.")
-        app.launch(server_name="0.0.0.0", server_port=7860, share=True)
+        app.launch(server_name="0.0.0.0", server_port=7860, share=True, favicon_path="./Image/logo.png")
     except Exception as e:
         print(f"❌ 서버 시작 중 오류 발생: {e}")
 
