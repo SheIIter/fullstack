@@ -56,18 +56,18 @@ try:
 except ImportError:
     UPSTAGE_AVAILABLE = False
 
-# 🎨 이미지 생성을 위한 색상 및 폰트 설정 (PIL 폴백용)
+# 🎨 이미지 생성을 위한 색상 및 폰트 설정 (PIL 폴백용) - 초록색 테마
 COLORS = {
-    'bg': '#f0f2f6',
+    'bg': '#f0f9ff',
     'white': '#ffffff',
-    'primary': '#00C278',
-    'success': '#4CAF50',
-    'warning': '#FF9800',
-    'danger': '#f44336',
-    'text': '#31333F',
+    'primary': '#10b981',
+    'success': '#059669',
+    'warning': '#f59e0b',
+    'danger': '#ef4444',
+    'text': '#1f2937',
     'muted': '#6b7280',
-    'border': '#e5e7eb',
-    'accent': '#667eea'
+    'border': '#d1fae5',
+    'accent': '#047857'
 }
 
 
@@ -82,35 +82,35 @@ EMBED_HEAD = """
 <style>
   :root {
     --card-bg: #ffffff;
-    --bg: #f7f8fa;
-    --border: #e5e7eb;
+    --bg: #f0fdf4;
+    --border: #d1fae5;
     --text: #1f2937;
     --text-weak: #4b5563;
     --muted: #6b7280;
-    --primary: #00C278;
-    --primary-dark: #00a366;
-    --accent: #667eea;
-    --shadow: rgba(0,0,0,.08);
-    --badge-bg: #eef2ff;
-    --badge-text: #3730a3;
-    --badge-border: #c7d2fe;
+    --primary: #10b981;
+    --primary-dark: #059669;
+    --accent: #047857;
+    --shadow: rgba(16, 185, 129, 0.1);
+    --badge-bg: #ecfdf5;
+    --badge-text: #065f46;
+    --badge-border: #a7f3d0;
   }
 
   @media (prefers-color-scheme: dark) {
     :root {
-      --card-bg: #111827;
-      --bg: #0b0f16;
-      --border: #1f2937;
-      --text: #e5e7eb;
+      --card-bg: #0f172a;
+      --bg: #020617;
+      --border: #1e293b;
+      --text: #e2e8f0;
       --text-weak: #cbd5e1;
-      --muted: #9ca3af;
-      --primary: #2dd4bf;
-      --primary-dark: #0ea5a3;
-      --accent: #8b9cf7;
-      --shadow: rgba(0,0,0,.35);
-      --badge-bg: #1f2937;
-      --badge-text: #c7d2fe;
-      --badge-border: #374151;
+      --muted: #94a3b8;
+      --primary: #34d399;
+      --primary-dark: #10b981;
+      --accent: #059669;
+      --shadow: rgba(16, 185, 129, 0.2);
+      --badge-bg: #064e3b;
+      --badge-text: #6ee7b7;
+      --badge-border: #065f46;
     }
   }
 
@@ -220,17 +220,8 @@ DEFAULT_EMBED_CSS = """
 }
 """
 
-def load_style_css():
-    for p in ["style.css", "./style.css", str(Path(__file__).parent / "style.css")]:
-        if os.path.exists(p):
-            try:
-                with open(p, "r", encoding="utf-8") as f:
-                    return f.read()
-            except:
-                pass
-    return DEFAULT_EMBED_CSS
-
-EMBED_CSS = load_style_css()
+# style.css 파일 로드 제거 - Gradio 테마와의 충돌 방지
+EMBED_CSS = DEFAULT_EMBED_CSS
 
 
 def md_to_html(md_text: str) -> str:
@@ -577,7 +568,7 @@ def google_text_to_speech(text, lang_code="KO"):
             audio_content = base64.b64decode(response.json()['audioContent'])
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
                 tmp_file.write(audio_content)
-                msg = "음성 생성 완료!" if len(text_chunks) == 1 else f"음성 생성 완료! (긴 텍스트로 인해 {len(text_chunks)}개 중 첫 번째 부분만 재생)"
+                msg = "음성 생성 완료!" if len(text_chunks) == 1 else f"음성 생성 완료!"
                 return tmp_file.name, msg
         else:
             return None, f"TTS 오류: {response.text}"
@@ -781,7 +772,7 @@ def create_clean_report_image(report_text: str, report_type: str = "report") -> 
     
     # 헤더 배경
     header_height = 120
-    draw.rectangle([0, 0, width, header_height], fill='#00C278')
+    draw.rectangle([0, 0, width, header_height], fill='#10b981')
     
     # 메인 컨텐츠 배경 (흰색 카드)
     draw.rectangle([margin//2, header_height, width-margin//2, total_height-margin//2],
@@ -806,19 +797,19 @@ def create_clean_report_image(report_text: str, report_type: str = "report") -> 
             draw.line([margin, y, width-margin, y], fill='#e5e7eb', width=2)
             
         elif line_type == 'h1':
-            draw.text((margin, y), text, fill='#00C278', font=get_font(22, bold=True))
+            draw.text((margin, y), text, fill='#10b981', font=get_font(22, bold=True))
             # 헤딩 밑줄
-            draw.line([margin, y+32, margin+300, y+32], fill='#00C278', width=3)
+            draw.line([margin, y+32, margin+300, y+32], fill='#10b981', width=3)
             
         elif line_type == 'h2':
-            draw.text((margin, y), text, fill='#667eea', font=heading_font)
+            draw.text((margin, y), text, fill='#047857', font=heading_font)
             
         elif line_type == 'h3':
             draw.text((margin, y), text, fill='#1f2937', font=get_font(18, bold=True))
             
         elif line_type == 'bullet':
             # 불릿 포인트
-            draw.text((margin, y), "•", fill='#00C278', font=text_font)
+            draw.text((margin, y), "•", fill='#10b981', font=text_font)
             draw.text((margin + 20, y), text, fill='#374151', font=text_font)
             
         elif line_type == 'bold':
@@ -941,106 +932,136 @@ def chat_with_ai(message, history):
 
 # Gradio 인터페이스 
 def create_interface():
-    css = """
-    .gradio-container { font-family: 'Noto Sans KR', sans-serif !important; }
-    .main-header {
-        text-align: center;
-        background: linear-gradient(135deg, #00C278, #00a366);
-        color: white; padding: 2rem; border-radius: 20px; margin-bottom: 1.5rem;
-        box-shadow: 0 8px 30px rgba(0, 194, 120, 0.3);
-    }
-    .main-header h1 { font-weight: 700; font-size: 2.5em; }
-    .main-header p { font-size: 1.1em; opacity: 0.9; }
-
-    /* 채팅 말풍선 스타일 */
-    .chatbot { background-color: #f9fafb !important; border-radius: 20px !important; }
-    @media (prefers-color-scheme: dark) {
-        .chatbot { background-color: #0b0f16 !important; }
-    }
-    
-    .chatbot .message-wrap { justify-content: flex-start !important; }
-    .chatbot .message.user {
-        background: linear-gradient(135deg, #00C278, #00a366) !important;
-        color: white !important;
-        border-bottom-right-radius: 2px !important;
-    }
-    .chatbot .message.bot {
-        background: #ffffff !important;
-        color: #31333F !important;
-        border: 1px solid #e5e7eb !important;
-        border-bottom-left-radius: 2px !important;
-    }
-    @media (prefers-color-scheme: dark) {
-        .chatbot .message.bot { background: #111827 !important; color: #e5e7eb !important; border-color: #1f2937 !important;}
-    }
-
-    /* 버튼 스타일 통일 */
-    .gradio-container button {
-      transition: all 0.2s ease-in-out !important;
-    }
-    .gradio-container button:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-    }
-    """
-
     with gr.Blocks(
         title="AI 부동산 법률 비서",
-        css=css,
-        theme=gr.themes.Soft(primary_hue="emerald", secondary_hue="blue")
+        theme=gr.themes.Soft(primary_hue="emerald", secondary_hue="green")
     ) as interface:
-        gr.HTML(f"""
-        <div class="main-header">
-            <h1>🐢 AI 부동산 법률 비서</h1>
-            <p>부동산 계약서의 숨은 위험을 찾아내고, 당신의 소중한 자산을 지켜드립니다.</p>
-        </div>
-        """)
-
-        with gr.Row(equal_height=False):
-            # 왼쪽: 파일 분석
-            with gr.Column(scale=6, min_width=500):
-                with gr.Group():
-                    gr.Markdown("## 📋 계약서 분석")
-                    file_input = gr.File(
-                        label="📁 계약서 파일을 업로드하세요",
-                        file_types=[".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx", ".hwp", ".txt"],
-                        type="filepath"
-                    )
-                    with gr.Row():
-                        analyze_btn = gr.Button("🔍 분석 시작", variant="primary", scale=3)
-                        clear_btn = gr.Button("🗑️ 초기화", variant="secondary", scale=1)
+        # 메인 헤더 - 아름다운 디자인
+        with gr.Row():
+            gr.HTML("""
+            <div style="
+                background: linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%);
+                border-radius: 20px;
+                padding: 2rem;
+                margin: 1rem 0;
+                box-shadow: 0 10px 30px rgba(16, 185, 129, 0.3);
+                text-align: center;
+                position: relative;
+                overflow: hidden;
+            ">
+                <!-- 배경 장식 요소 -->
+                <div style="
+                    position: absolute;
+                    top: -50px;
+                    right: -50px;
+                    width: 100px;
+                    height: 100px;
+                    background: rgba(255, 255, 255, 0.1);
+                    border-radius: 50%;
+                "></div>
+                <div style="
+                    position: absolute;
+                    bottom: -30px;
+                    left: -30px;
+                    width: 60px;
+                    height: 60px;
+                    background: rgba(255, 255, 255, 0.08);
+                    border-radius: 50%;
+                "></div>
                 
-                with gr.Group():
-                    gr.Markdown("### 🌍 번역, 🔊 음성, 📸 PNG 저장")
-                    with gr.Row():
-                        analysis_translate_lang = gr.Dropdown(choices=["원본", "EN", "JA", "ZH", "UK", "VI"], label="언어 선택", value="원본")
-                        analysis_speech_lang = gr.Dropdown(choices=["한국어", "영어", "일본어", "중국어"], label="음성 언어", value="한국어")
-                    with gr.Row():
-                        analysis_translate_btn = gr.Button("🌍 번역하기")
-                        analysis_speech_btn = gr.Button("🔊 음성 생성")
-                        analysis_image_btn = gr.Button("📸 PNG 저장", variant="secondary")
+                <!-- 메인 제목 -->
+                <div style="
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 1rem;
+                    margin-bottom: 1rem;
+                ">
+                    <div style="
+                        font-size: 3rem;
+                        filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2));
+                    "></div>
+                    <div>
+                        <h1 style="
+                            color: white;
+                            margin: 0;
+                            font-size: 4.5rem;
+                            font-weight: 700;
+                            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+                            letter-spacing: -0.02em;
+                        ">SHELLTER</h1>
+                    </div>
+                    <div style="
+                        font-size: 3rem;
+                        filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2));
+                    "></div>
+                </div>
+                
+                <!-- 서브 타이틀 -->
+                <p style="
+                    color: rgba(255, 255, 255, 0.95);
+                    margin: 0;
+                    font-size: 1.2rem;
+                    font-weight: 400;
+                    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+                    line-height: 1.5;
+                ">🐢 부동산 계약서의 숨은 위험을 찾아내고, 당신의 소중한 자산을 지켜드립니다.</p>
+                
+                <!-- 기능 하이라이트 -->
+                <div style="
+                    display: flex;
+                    justify-content: center;
+                    gap: 1.5rem;
+                    margin-top: 1.5rem;
+                    flex-wrap: wrap;
+                ">
+                </div>
+            </div>
+            """)
 
-                    # 번역 결과를 HTML로 표시하도록 변경
-                    analysis_translation_output = gr.HTML(label="번역된 분석 결과", visible=True)
-                    with gr.Row():
-                        analysis_audio_output = gr.Audio(label="분석 결과 음성", type="filepath")
-                        analysis_speech_status = gr.Textbox(label="음성 상태", interactive=False)
-                    analysis_image_download = gr.File(label="📸 생성된 리포트 PNG", visible=True)
+        # 메인 컨텐츠
+        with gr.Row():
+            # 왼쪽: 파일 분석
+            with gr.Column(scale=6):
+                gr.Markdown("## 📋 계약서 분석")
+                file_input = gr.File(
+                    label="📁 계약서 파일을 업로드하세요",
+                    file_types=[".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx", ".hwp", ".txt"],
+                    type="filepath"
+                )
+                with gr.Row():
+                    analyze_btn = gr.Button("🔍 분석 시작", variant="primary", size="lg")
+                    clear_btn = gr.Button("🗑️ 초기화", variant="secondary")
+                
+                gr.Markdown("### 🌍 번역, 🔊 음성, 📸 PNG 저장")
+                with gr.Row():
+                    analysis_translate_lang = gr.Dropdown(choices=["원본", "EN", "JA", "ZH", "UK", "VI"], label="언어 선택", value="원본")
+                    analysis_speech_lang = gr.Dropdown(choices=["한국어", "영어", "일본어", "중국어"], label="음성 언어", value="한국어")
+                with gr.Row():
+                    analysis_translate_btn = gr.Button("🌍 번역하기", variant="secondary")
+                    analysis_speech_btn = gr.Button("🔊 음성 생성", variant="secondary")
+                    analysis_image_btn = gr.Button("📸 PNG 저장", variant="secondary")
+
+                # 번역 결과를 HTML로 표시
+                analysis_translation_output = gr.HTML(label="번역된 분석 결과", visible=True)
+                with gr.Row():
+                    analysis_audio_output = gr.Audio(label="분석 결과 음성", type="filepath")
+                    analysis_speech_status = gr.Textbox(label="음성 상태", interactive=False)
+                analysis_image_download = gr.File(label="📸 생성된 리포트 PNG", visible=True)
 
             # 오른쪽: 채팅 및 보고서
-            with gr.Column(scale=7, min_width=600):
-                gr.Markdown("## 🤖 AI 법률 상담 & 분석 결과")
+            with gr.Column(scale=6):
+                gr.Markdown("## 🕵️ AI 분석 & 상담")
                 with gr.Tabs() as tabs:
                     with gr.TabItem("📊 분석 보고서", id=0):
                         analysis_output_html = gr.HTML(
-                           value="<div style='display:flex; justify-content:center; align-items:center; height:400px; border: 2px dashed #e5e7eb; border-radius: 20px;'><p style='color:#6b7280;'>📤 파일을 업로드하고 <b>[🔍 분석 시작]</b> 버튼을 클릭하세요.</p></div>"
+                           value="<div style='text-align: center; padding: 40px; color: #6b7280; border: 2px dashed #e5e7eb; border-radius: 12px;'><p>📤 파일을 업로드하고 <b>[🔍 분석 시작]</b> 버튼을 클릭하세요.</p></div>"
                         )
                     
                     with gr.TabItem("💬 실시간 상담", id=1):
                         chatbot = gr.Chatbot(
-                            elem_classes=["chatbot"],
                             value=[(None, "안녕하세요! 부동산 관련 질문이 있으시면 언제든 물어보세요.")],
-                            height=500, show_label=False, container=True, show_copy_button=True,
+                            height=400, show_label=False, container=True, show_copy_button=True,
                             bubble_full_width=False,
                         )
                         msg_input = gr.Textbox(placeholder="부동산 관련 질문을 입력하세요...", show_label=False, container=False)
@@ -1054,9 +1075,9 @@ def create_interface():
                                 chat_translate_lang = gr.Dropdown(choices=["원본", "EN", "JA", "ZH", "UK", "VI"], label="번역 언어", value="원본")
                                 chat_speech_lang = gr.Dropdown(choices=["한국어", "영어", "일본어", "중국어"], label="음성 언어", value="한국어")
                             with gr.Row():
-                                chat_translate_btn = gr.Button("🌍 번역")
-                                chat_speech_btn = gr.Button("🔊 음성")
-                                chat_image_btn = gr.Button("📸 PNG 저장")
+                                chat_translate_btn = gr.Button("🌍 번역", variant="secondary")
+                                chat_speech_btn = gr.Button("🔊 음성", variant="secondary")
+                                chat_image_btn = gr.Button("📸 PNG 저장", variant="secondary")
                             # 채팅 번역 결과도 HTML로 표시
                             chat_translation_output = gr.HTML(label="번역된 답변", visible=True)
                             chat_audio_output = gr.Audio(label="답변 음성", type="filepath")
