@@ -1033,21 +1033,21 @@ def create_interface():
                     analyze_btn = gr.Button("🔍 분석 시작", variant="primary", size="lg")
                     clear_btn = gr.Button("🗑️ 초기화", variant="secondary")
                 
-                gr.Markdown("### 🌍 번역, 🔊 음성, 📸 PNG 저장")
-                with gr.Row():
-                    analysis_translate_lang = gr.Dropdown(choices=["원본", "EN", "JA", "ZH", "UK", "VI"], label="언어 선택", value="원본")
-                    analysis_speech_lang = gr.Dropdown(choices=["한국어", "영어", "일본어", "중국어"], label="음성 언어", value="한국어")
-                with gr.Row():
-                    analysis_translate_btn = gr.Button("🌍 번역하기", variant="secondary")
-                    analysis_speech_btn = gr.Button("🔊 음성 생성", variant="secondary")
-                    analysis_image_btn = gr.Button("📸 PNG 저장", variant="secondary")
+                with gr.Accordion("🌍 분석 결과 부가기능", open=False):
+                    with gr.Row():
+                        analysis_translate_lang = gr.Dropdown(choices=["원본", "EN", "JA", "ZH", "UK", "VI"], label="언어 선택", value="원본")
+                        analysis_speech_lang = gr.Dropdown(choices=["한국어", "영어", "일본어", "중국어"], label="음성 언어", value="한국어")
+                    with gr.Row():
+                        analysis_translate_btn = gr.Button("🌍 번역하기", variant="secondary")
+                        analysis_speech_btn = gr.Button("🔊 음성 생성", variant="secondary")
+                        analysis_image_btn = gr.Button("📸 PNG 저장", variant="secondary")
 
-                # 번역 결과를 HTML로 표시
-                analysis_translation_output = gr.HTML(label="번역된 분석 결과", visible=True)
-                with gr.Row():
-                    analysis_audio_output = gr.Audio(label="분석 결과 음성", type="filepath")
-                    analysis_speech_status = gr.Textbox(label="음성 상태", interactive=False)
-                analysis_image_download = gr.File(label="📸 생성된 리포트 PNG", visible=True)
+                    # 번역 결과를 HTML로 표시
+                    analysis_translation_output = gr.HTML(label="번역된 분석 결과", visible=True)
+                    with gr.Row():
+                        analysis_audio_output = gr.Audio(label="분석 결과 음성", type="filepath")
+                        analysis_speech_status = gr.Textbox(label="음성 상태", interactive=False)
+                    analysis_image_download = gr.File(label="📸 생성된 리포트 PNG", visible=True)
 
             # 오른쪽: 채팅 및 보고서
             with gr.Column(scale=6):
