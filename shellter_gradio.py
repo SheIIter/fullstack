@@ -823,7 +823,7 @@ def create_clean_report_image(report_text: str, report_type: str = "report", lan
             title = "🌐 翻訳結果"
         elif lang_code == 'ZH':
             title = "🌐 翻译结果"
-        # ### NEW: 우크라이나어, 베트남어 제목 추가
+        # 우크라이나어, 베트남어 제목 추가
         elif lang_code == 'UK':
             title = "🌐 Результат перекладу"
         elif lang_code == 'VI':
@@ -837,18 +837,21 @@ def create_clean_report_image(report_text: str, report_type: str = "report", lan
     current_y += 50
     
     # 날짜 추가
-    date_str = f"생성일시: {datetime.now().strftime('%Y년 %m월 %d일 %H시 %M분')}"
-    if lang_code == 'EN':
-        date_str = f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    now = datetime.now()
+    if lang_code == 'KO':
+        date_str = f"생성일시: {now.strftime('%Y')}년 {now.strftime('%m')}월 {now.strftime('%d')}일 {now.strftime('%H')}시 {now.strftime('%M')}분"
+    elif lang_code == 'EN':
+        date_str = f"Generated: {now.strftime('%Y-%m-%d %H:%M')}"
     elif lang_code == 'JA':
-        date_str = f"生成日時: {datetime.now().strftime('%Y年%m月%d日 %H時%M分')}"
+        date_str = f"生成日時: {now.strftime('%Y')}年{now.strftime('%m')}月{now.strftime('%d')}日 {now.strftime('%H')}時{now.strftime('%M')}分"
     elif lang_code == 'ZH':
-        date_str = f"生成时间: {datetime.now().strftime('%Y年%m月%d日 %H时%M分')}"
-    # ### NEW: 우크라이나어, 베트남어 날짜 추가
+        date_str = f"生成时间: {now.strftime('%Y')}年{now.strftime('%m')}月{now.strftime('%d')}日 {now.strftime('%H')}时{now.strftime('%M')}分"
     elif lang_code == 'UK':
-        date_str = f"Створено: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        date_str = f"Створено: {now.strftime('%Y-%m-%d %H:%M')}"
     elif lang_code == 'VI':
-        date_str = f"Được tạo: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        date_str = f"Được tạo: {now.strftime('%Y-%m-%d %H:%M')}"
+    else: # 혹시 모를 예외 처리
+        date_str = f"Generated: {now.strftime('%Y-%m-%d %H:%M')}"
 
     lines.append(('date', date_str, current_y))
     current_y += 40
@@ -1243,7 +1246,7 @@ def detect_language_code(text: str, translate_lang: str) -> str:
             return 'KO'
         elif len(re.findall(r'[a-zA-Z]', text)) > len(text) * 0.5:
             return 'EN'
-        # ### NEW: 일본어, 중국어 감지 로직 추가
+        # 일본어, 중국어 감지 로직 추가
         elif len(re.findall(r'[\u3040-\u30ff]', text)) > len(text) * 0.3: # Hiragana/Katakana
             return 'JA'
         elif len(re.findall(r'[\u4e00-\u9fff]', text)) > len(text) * 0.3: # CJK Unified Ideographs
@@ -1484,8 +1487,30 @@ def create_interface():
                 
                 gr.Markdown("### 🌐 번역, 🎧 음성, 📁 PNG 저장")
                 with gr.Row():
-                    analysis_translate_lang = gr.Dropdown(choices=["원본", "EN 🇺🇸", "JA 🇯🇵", "ZH 🇨🇳", "UK 🇺🇦", "VI 🇻🇳"], label="언어 선택", value="원본")
-                    analysis_speech_lang = gr.Dropdown(choices=["한국어", "영어 🇺🇸", "일본어 🇯🇵", "중국어 🇨🇳", "우크라이나어 🇺🇦", "베트남어 🇻🇳"], label="음성 언어", value="한국어")
+                    analysis_translate_lang = gr.Dropdown(
+                        choices=[
+                            ("원본", "원본"),
+                            ("영어 🇺🇸", "EN"),
+                            ("일본어 🇯🇵", "JA"),
+                            ("중국어 🇨🇳", "ZH"),
+                            ("우크라이나어 🇺🇦", "UK"),
+                            ("베트남어 🇻🇳", "VI")
+                        ],
+                        label="언어 선택",
+                        value="원본"
+                    )
+                    analysis_speech_lang = gr.Dropdown(
+                        choices=[
+                            ("한국어 🇰🇷", "KO"),
+                            ("영어 🇺🇸", "EN"),
+                            ("일본어 🇯🇵", "JA"),
+                            ("중국어 🇨🇳", "ZH"),
+                            ("우크라이나어 🇺🇦", "UK"),
+                            ("베트남어 🇻🇳", "VI")
+                        ],
+                        label="음성 언어",
+                        value="KO"
+                    )
                 with gr.Row():
                     analysis_translate_btn = gr.Button("🌎 번역하기", variant="secondary")
                     analysis_speech_btn = gr.Button("🎧 음성 생성", variant="secondary")
@@ -1524,8 +1549,30 @@ def create_interface():
                         )
                         with gr.Accordion("🌐 채팅 답변 부가기능", open=False):
                             with gr.Row():
-                                chat_translate_lang = gr.Dropdown(choices=["원본", "EN", "JA", "ZH", "UK", "VI"], label="번역 언어", value="원본")
-                                chat_speech_lang = gr.Dropdown(choices=["한국어", "영어", "일본어", "중국어", "우크라이나어", "베트남어"], label="음성 언어", value="한국어")
+                                chat_translate_lang = gr.Dropdown(
+                                    choices=[
+                                        ("원본", "원본"),
+                                        ("영어 🇺🇸", "EN"),
+                                        ("일본어 🇯🇵", "JA"),
+                                        ("중국어 🇨🇳", "ZH"),
+                                        ("우크라이나어 🇺🇦", "UK"),
+                                        ("베트남어 🇻🇳", "VI")
+                                    ],
+                                    label="번역 언어",
+                                    value="원본"
+                                )
+                                chat_speech_lang = gr.Dropdown(
+                                    choices=[
+                                        ("한국어 🇰🇷", "KO"),
+                                        ("영어 🇺🇸", "EN"),
+                                        ("일본어 🇯🇵", "JA"),
+                                        ("중국어 🇨🇳", "ZH"),
+                                        ("우크라이나어 🇺🇦", "UK"),
+                                        ("베트남어 🇻🇳", "VI")
+                                    ],
+                                    label="음성 언어",
+                                    value="KO"
+                                )
                             with gr.Row():
                                 chat_translate_btn = gr.Button("🌎 번역", variant="secondary")
                                 chat_speech_btn = gr.Button("🎧 음성", variant="secondary")
@@ -1734,7 +1781,7 @@ def create_interface():
 def main():
     print("🐢🐢🐢🐢 AI 부동산 법률 비서를 시작합니다...")
     
-    # (백그라운드 작업) 다국어 폰트 다운로드 및 설정
+    # 1. (백그라운드 작업) 다국어 폰트 다운로드 및 설정
     setup_fonts()
     
     # 2. (백그라운드 작업) AI의 지식 베이스(Vector DB) 구축
