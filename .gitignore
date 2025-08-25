@@ -4,4 +4,6 @@
 .env.production.local
 .env.local
 
+.gradio
+
 venv/

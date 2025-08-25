@@ -77,6 +77,7 @@ EMBED_HEAD = """
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="png" type="image/png" href="./Image/logo.png">
 <!-- 가독성과 한글 안정성을 위한 Noto Sans KR -->
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
@@ -933,7 +934,7 @@ def chat_with_ai(message, history):
 # Gradio 인터페이스 
 def create_interface():
     with gr.Blocks(
-        title="AI 부동산 법률 비서",
+        title="AI 전세 계약 법률 비서",
         theme=gr.themes.Soft(primary_hue="emerald", secondary_hue="green")
     ) as interface:
         # 메인 헤더 - 아름다운 디자인
@@ -1238,7 +1239,7 @@ def main():
         app = create_interface()
         print("✅ 인터페이스 생성 완료")
         # 'share'를 True로 바꾸면 외부에서 접속 가능한 공개 URL이 생성됩니다.
-        app.launch(server_name="0.0.0.0", server_port=7860, share=True)
+        app.launch(server_name="0.0.0.0", server_port=7860, share=True, favicon_path="./Image/logo.png")
     except Exception as e:
         print(f"❌ 서버 시작 중 오류 발생: {e}")
 
