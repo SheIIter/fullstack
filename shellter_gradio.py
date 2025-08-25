@@ -71,22 +71,23 @@ LAW_PARSED_PATH = "./data/주택임대차보호법(법률)(제19356호)_parsed.j
 DEFAULTER_LIST_PATH = "./data/상습채무불이행자.CSV"
 CHROMA_DB_PATH = "./chroma_db_real_estate_gradio"
 
-# ### NEW FUNCTION ###: 다국어 폰트 자동 다운로드 기능
+# 다국어 폰트 자동 다운로드 로직, TTF만으로 정확한 링크로 수정 진행.
 FONTS_DIR = Path("./fonts")
 FONT_URLS = {
-    # Noto Sans (영어, 우크라이나어, 베트남어 등 라틴/키릴 문자권 포괄)
-    "NotoSans-Regular.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans-Regular.ttf",
-    "NotoSans-Bold.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans-Bold.ttf",
+    # Noto Sans (라틴/키릴/기본영문)
+    "NotoSans-Regular.ttf": "https://github.com/googlefonts/noto-fonts/blob/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf?raw=true",
+    "NotoSans-Bold.ttf": "https://github.com/googlefonts/noto-fonts/blob/main/hinted/ttf/NotoSans/NotoSans-Bold.ttf?raw=true",
     # Noto Sans KR (한국어)
-    "NotoSansKR-Regular.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanskr/NotoSansKR-Regular.ttf",
-    "NotoSansKR-Bold.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanskr/NotoSansKR-Bold.ttf",
+    "NotoSansKR-Regular.ttf": "https://github.com/googlefonts/noto-cjk/blob/main/Sans/TTF/Korean/NotoSansKR-Regular.ttf?raw=true",
+    "NotoSansKR-Bold.ttf": "https://github.com/googlefonts/noto-cjk/blob/main/Sans/TTF/Korean/NotoSansKR-Bold.ttf?raw=true",
     # Noto Sans JP (일본어)
-    "NotoSansJP-Regular.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansjp/NotoSansJP-Regular.ttf",
-    "NotoSansJP-Bold.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansjp/NotoSansJP-Bold.ttf",
+    "NotoSansJP-Regular.ttf": "https://github.com/googlefonts/noto-cjk/blob/main/Sans/TTF/Japanese/NotoSansJP-Regular.ttf?raw=true",
+    "NotoSansJP-Bold.ttf": "https://github.com/googlefonts/noto-cjk/blob/main/Sans/TTF/Japanese/NotoSansJP-Bold.ttf?raw=true",
     # Noto Sans SC (중국어 간체)
-    "NotoSansSC-Regular.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/NotoSansSC-Regular.ttf",
-    "NotoSansSC-Bold.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/NotoSansSC-Bold.ttf",
+    "NotoSansSC-Regular.ttf": "https://github.com/googlefonts/noto-cjk/blob/main/Sans/TTF/SimplifiedChinese/NotoSansSC-Regular.ttf?raw=true",
+    "NotoSansSC-Bold.ttf": "https://github.com/googlefonts/noto-cjk/blob/main/Sans/TTF/SimplifiedChinese/NotoSansSC-Bold.ttf?raw=true",
 }
+
 
 def setup_fonts():
     """
@@ -1108,7 +1109,7 @@ def perform_ai_analysis(contract_text: str) -> dict:
 def deepl_translate_text(text, target_lang):
     if not DEEPL_API_KEY:
         lang_names = {"EN": "영어", "JA": "일본어", "ZH": "중국어", "UK": "우크라이나어", "VI": "베트남어"}
-        return f"[{lang_names.get(target_lang, target_lang)} 번역 기능]\n\nDeepL API 키가 설정되지 않아 실제 번역은 불가능합니다.\n\n원본 텍스트:\n{text[:500]}..."
+        return f"[{lang_names.get(target_lang, target_lang)} 번역 기능]\n\nDeepL API 키가 설정되지 않아 실제 번역은 불가능합니다.\n\n원본 텍스트:\n{text}..."
     try:
         headers = {"Authorization": f"DeepL-Auth-Key {DEEPL_API_KEY}"}
         data = {"text": [text], "target_lang": target_lang}
@@ -1116,7 +1117,7 @@ def deepl_translate_text(text, target_lang):
         response.raise_for_status()
         return response.json()["translations"][0]["text"]
     except Exception as e:
-        return f"번역 오류: {e}\n\n원본 텍스트:\n{text[:500]}..."
+        return f"번역 오류: {e}\n\n원본 텍스트:\n{text}..."
 
 def split_text_for_tts(text, max_bytes=4500):
     if len(text.encode('utf-8')) <= max_bytes:
@@ -1733,7 +1734,7 @@ def create_interface():
 def main():
     print("🐢🐢🐢🐢 AI 부동산 법률 비서를 시작합니다...")
     
-    # ### NEW ###: 1. (백그라운드 작업) 다국어 폰트 다운로드 및 설정
+    # (백그라운드 작업) 다국어 폰트 다운로드 및 설정
     setup_fonts()
     
     # 2. (백그라운드 작업) AI의 지식 베이스(Vector DB) 구축
