@@ -1067,7 +1067,14 @@ def create_interface():
                         msg_input = gr.Textbox(placeholder="부동산 관련 질문을 입력하세요...", show_label=False, container=False)
                         send_btn = gr.Button("📤 전송", variant="primary")
                         gr.Examples(
-                            ["전세 계약 시 주의사항은?", "보증금 반환을 위한 조건은?", "월세 계약과 전세 계약의 차이점은?"],
+                            [
+                                "전세 계약 시 주의사항은 뭔가요?",  
+                                "전세집에 하자(곰팡이, 누수 등)가 생기면 어떻게 하나요?",
+                                "집주인이 바뀌면 계약서를 다시 써야 하나요?",
+                                "전세 만기인데 보증금을 못 준다 하면 어떻게 해야 하나요?",
+                                "이 집이 경매에 넘어갔다고 하는데 어떻게 하나요?,"
+                                "전세보증보험, 지금이라도 가입하거나 보호받을 수 있나요?"
+                            ],
                             inputs=msg_input, label="💡 질문 예시"
                         )
                         with gr.Accordion("🌍 채팅 답변 부가기능", open=False):
