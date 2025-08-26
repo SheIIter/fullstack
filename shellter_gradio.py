@@ -102,19 +102,18 @@ CHROMA_DB_PATH = "./chroma_db_real_estate_gradio"
 FONTS_DIR = Path("./fonts")
 FONT_URLS = {
     # Noto Sans (라틴/키릴/기본영문)
-    "NotoSans-Regular.ttf": "https://github.com/googlefonts/noto-fonts/blob/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf?raw=true",
-    "NotoSans-Bold.ttf": "https://github.com/googlefonts/noto-fonts/blob/main/hinted/ttf/NotoSans/NotoSans-Bold.ttf?raw=true",
+    "NotoSans-Regular.ttf": "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf",
+    "NotoSans-Bold.ttf": "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Bold.ttf",
     # Noto Sans KR (한국어)
-    "NotoSansKR-Regular.ttf": "https://github.com/googlefonts/noto-cjk/blob/main/Sans/TTF/Korean/NotoSansKR-Regular.ttf?raw=true",
-    "NotoSansKR-Bold.ttf": "https://github.com/googlefonts/noto-cjk/blob/main/Sans/TTF/Korean/NotoSansKR-Bold.ttf?raw=true",
+    "NotoSansKR-Regular.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf",
+    "NotoSansKR-Bold.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Korean/NotoSansCJKkr-Bold.otf",
     # Noto Sans JP (일본어)
-    "NotoSansJP-Regular.ttf": "https://github.com/googlefonts/noto-cjk/blob/main/Sans/TTF/Japanese/NotoSansJP-Regular.ttf?raw=true",
-    "NotoSansJP-Bold.ttf": "https://github.com/googlefonts/noto-cjk/blob/main/Sans/TTF/Japanese/NotoSansJP-Bold.ttf?raw=true",
+    "NotoSansJP-Regular.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf",
+    "NotoSansJP-Bold.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf",
     # Noto Sans SC (중국어 간체)
-    "NotoSansSC-Regular.ttf": "https://github.com/googlefonts/noto-cjk/blob/main/Sans/TTF/SimplifiedChinese/NotoSansSC-Regular.ttf?raw=true",
-    "NotoSansSC-Bold.ttf": "https://github.com/googlefonts/noto-cjk/blob/main/Sans/TTF/SimplifiedChinese/NotoSansSC-Bold.ttf?raw=true",
+    "NotoSansSC-Regular.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+    "NotoSansSC-Bold.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf"
 }
-
 
 def setup_fonts():
     """
