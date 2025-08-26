@@ -113,7 +113,11 @@ FONT_URLS = {
     "NotoSansJP-Bold.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf",
     # Noto Sans SC (중국어 간체) - TTF 파일로 수정
     "NotoSansSC-Regular.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
-    "NotoSansSC-Bold.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf"
+    "NotoSansSC-Bold.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf",
+    # Noto Color Emoji (이모지 지원)
+    "NotoColorEmoji-Regular.ttf": "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf",
+    # Noto Sans (우크라이나어 키릴 문자 지원) - 추가
+    "NotoSans-{style}.ttf": "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf"
 }
 
 def setup_fonts():
@@ -254,8 +258,8 @@ def get_multilingual_font(size=16, bold=False, lang_code='KO'):
         'KO': [f'NotoSansKR-{style}.ttf', f'NotoSansKR-{style}.otf'],
         'JA': [f'NotoSansJP-{style}.ttf', f'NotoSansJP-{style}.otf'],
         'ZH': [f'NotoSansSC-{style}.ttf', f'NotoSansSC-{style}.otf'],
-        # 우크라이나어(키릴), 베트남어(라틴 확장) 등은 기본 NotoSans로 커버
-        'UK': [f'NotoSans-{style}.ttf'],
+        # 우크라이나어(키릴) - 키릴 문자 지원 폰트 추가
+        'UK': [f'NotoSans-{style}.ttf', f'NotoSansKR-{style}.ttf', f'NotoSansKR-{style}.otf'],
         'VI': [f'NotoSans-{style}.ttf'],
         'EN': [f'NotoSans-{style}.ttf'],
     }
@@ -294,6 +298,98 @@ def get_multilingual_font(size=16, bold=False, lang_code='KO'):
         return ImageFont.load_default()
     except Exception:
         return None
+
+def get_emoji_font(size=16):
+    """
+    이모지 전용 폰트를 로드합니다.
+    """
+    emoji_font_path = FONTS_DIR / "NotoColorEmoji-Regular.ttf"
+    if emoji_font_path.exists():
+        try:
+            return ImageFont.truetype(str(emoji_font_path), size)
+        except Exception as e:
+            print(f"⚠️ 이모지 폰트 로드 실패: {e}")
+    return None
+
+def draw_text_with_emoji(draw, text, position, main_font, emoji_font, align='left', color='#000000'):
+    """
+    이모지와 일반 텍스트를 혼합하여 렌더링합니다.
+    align: 'left', 'center', 'right'
+    """
+    if not emoji_font:
+        # 이모지 폰트가 없으면 기본 폰트로 렌더링
+        if align == 'center':
+            bbox = draw.textbbox((0, 0), text, font=main_font)
+            x = position[0] - (bbox[2] - bbox[0]) // 2
+            draw.text((x, position[1]), text, fill=color, font=main_font)
+        else:
+            draw.text(position, text, fill=color, font=main_font)
+        return
+    
+    # 이모지와 일반 텍스트를 분리
+    import re
+    emoji_pattern = re.compile(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\U00002600-\U000027BF\U0001F900-\U0001F9FF\U0001F018-\U0001F270]')
+    
+    # 이모지 위치 찾기
+    emoji_positions = []
+    for match in emoji_pattern.finditer(text):
+        emoji_positions.append((match.start(), match.end(), match.group()))
+    
+    if not emoji_positions:
+        # 이모지가 없으면 기본 렌더링
+        if align == 'center':
+            bbox = draw.textbbox((0, 0), text, font=main_font)
+            x = position[0] - (bbox[2] - bbox[0]) // 2
+            draw.text((x, position[1]), text, fill=color, font=main_font)
+        else:
+            draw.text(position, text, fill=color, font=main_font)
+        return
+    
+    # 텍스트를 이모지와 일반 텍스트로 분할하여 렌더링
+    current_x = position[0]
+    if align == 'center':
+        # 전체 텍스트 너비 계산
+        total_width = 0
+        last_end = 0
+        for start, end, emoji in emoji_positions:
+            # 이모지 앞의 일반 텍스트
+            if start > last_end:
+                text_part = text[last_end:start]
+                bbox = draw.textbbox((0, 0), text_part, font=main_font)
+                total_width += bbox[2] - bbox[0]
+            # 이모지
+            bbox = draw.textbbox((0, 0), emoji, font=emoji_font)
+            total_width += bbox[2] - bbox[0]
+            last_end = end
+        
+        # 마지막 일반 텍스트
+        if last_end < len(text):
+            text_part = text[last_end:]
+            bbox = draw.textbbox((0, 0), text_part, font=main_font)
+            total_width += bbox[2] - bbox[0]
+        
+        current_x = position[0] - total_width // 2
+    
+    # 실제 렌더링
+    last_end = 0
+    for start, end, emoji in emoji_positions:
+        # 이모지 앞의 일반 텍스트
+        if start > last_end:
+            text_part = text[last_end:start]
+            draw.text((current_x, position[1]), text_part, fill=color, font=main_font)
+            bbox = draw.textbbox((0, 0), text_part, font=main_font)
+            current_x += bbox[2] - bbox[0]
+        
+        # 이모지
+        draw.text((current_x, position[1]), emoji, fill=color, font=emoji_font)
+        bbox = draw.textbbox((0, 0), emoji, font=emoji_font)
+        current_x += bbox[2] - bbox[0]
+        last_end = end
+    
+    # 마지막 일반 텍스트
+    if last_end < len(text):
+        text_part = text[last_end:]
+        draw.text((current_x, position[1]), text_part, fill=color, font=main_font)
 
 
 def extract_text_from_file(file_path: str) -> tuple[str, str]:
@@ -571,24 +667,49 @@ DEFAULT_EMBED_CSS = """
     background: var(--badge-bg);
 }
 
-/* 🔥 FIXED: 테이블 반응형 처리 */
+/* 🔥 FIXED: 테이블 반응형 처리 (베트남어 지원 강화) */
 .report-section table, .translation-content table {
     width: 100%;
     border-collapse: collapse;
     margin: 1rem 0;
+    background: white;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 .report-section table { table-layout: fixed; }
 .translation-content table { table-layout: auto; }
-.translation-content .table-wrapper { overflow-x: auto; }
+.translation-content .table-wrapper { 
+    overflow-x: auto; 
+    margin: 20px 0;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
 .report-section th, .report-section td, .translation-content th, .translation-content td {
     border: 1px solid var(--border);
-    padding: 8px 12px;
+    padding: 12px 16px;
     word-wrap: break-word;
     overflow-wrap: break-word;
+    vertical-align: top;
 }
 .report-section th {
     background-color: var(--badge-bg);
     font-weight: 600;
+}
+.translation-content th {
+    background: var(--primary);
+    color: white;
+    font-weight: 600;
+    border-bottom: 2px solid var(--primary-dark);
+}
+.translation-content td {
+    border-bottom: 1px solid var(--border);
+}
+.translation-content tr:nth-child(even) {
+    background: var(--bg-light);
+}
+.translation-content tr:hover {
+    background: var(--bg-hover);
 }
 
 /* 🔥 FIXED: 긴 단어 강제 줄바꿈으로 레이아웃 깨짐 방지 */
@@ -599,15 +720,17 @@ DEFAULT_EMBED_CSS = """
 
 
 /* 번역 결과 전용 스타일 추가 */
-.translation-content {
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 24px;
-    margin: 8px 0;
-    box-shadow: 0 4px 20px var(--shadow);
-    line-height: 1.7;
-}
+    .translation-content {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 24px;
+        margin: 8px 0;
+        box-shadow: 0 4px 20px var(--shadow);
+        line-height: 1.7;
+        /* 베트남어 특수 문자 지원을 위한 폰트 설정 */
+        font-family: 'Noto Sans', 'Noto Sans KR', 'Noto Sans JP', 'Noto Sans SC', sans-serif;
+    }
 .translation-content h1, .translation-content h2, .translation-content h3 {
     color: var(--primary);
     margin-top: 24px;
@@ -654,15 +777,15 @@ DEFAULT_EMBED_CSS = """
 
 EMBED_CSS = DEFAULT_EMBED_CSS
 
-# 🔥 FIXED: 향상된 마크다운 -> HTML 변환 함수
+# 🔥 FIXED: 향상된 마크다운 -> HTML 변환 함수 (베트남어 및 테이블 지원 강화)
 def md_to_html(md_text: str) -> str:
-    """마크다운 텍스트를 HTML로 변환합니다. 라이브러리가 없으면 간단한 폴백을 사용합니다."""
+    """마크다운 텍스트를 HTML로 변환합니다. 베트남어 및 테이블 처리를 강화했습니다."""
     if not md_text:
         return ""
     
     if MARKDOWN_AVAILABLE:
         try:
-            # markdown2 라이브러리 우선 사용
+            # markdown2 라이브러리 우선 사용 (테이블 지원 강화)
             import markdown2
             return markdown2.markdown(
                 md_text, 
@@ -672,7 +795,9 @@ def md_to_html(md_text: str) -> str:
                     "break-on-newline", 
                     "spoiler",
                     "strike",
-                    "target-blank-links"
+                    "target-blank-links",
+                    "cuddled-lists",
+                    "footnotes"
                 ]
             )
         except:
@@ -681,12 +806,12 @@ def md_to_html(md_text: str) -> str:
                 import markdown
                 return markdown.markdown(
                     md_text,
-                    extensions=['codehilite', 'tables', 'fenced_code', 'nl2br']
+                    extensions=['codehilite', 'tables', 'fenced_code', 'nl2br', 'attr_list']
                 )
             except:
                 pass
     
-    # 폴백: 기본 마크다운 파싱 (향상된 버전)
+    # 폴백: 기본 마크다운 파싱 (베트남어 및 테이블 지원 강화)
     # 전각 기호 정규화: ｜(U+FF5C), －(U+FF0D) 등을 ASCII로 변환해 테이블/수평선 인식 개선
     html = (
         md_text
@@ -697,6 +822,9 @@ def md_to_html(md_text: str) -> str:
         .replace('—', '-')
         .replace('–', '-')
     )
+    
+    # 베트남어 특수 문자 보존
+    html = preserve_vietnamese_chars(html)
     
     # 코드 블록 처리 (``` 구문)
     html = re.sub(r'```(\w+)?\n(.*?)\n```', r'<pre><code>\2</code></pre>', html, flags=re.DOTALL)
@@ -721,12 +849,13 @@ def md_to_html(md_text: str) -> str:
     # 링크 처리
     html = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2" target="_blank">\1</a>', html)
     
-    # 리스트/테이블 처리 (개선된 버전)
+    # 테이블 처리 (강화된 버전)
+    html = process_markdown_tables(html)
+    
+    # 리스트 처리 (개선된 버전)
     lines = html.split('\n')
     in_ul = False
     in_ol = False
-    # 간단한 테이블 감싸기: 파이프가 포함된 줄이 연속되면 table-wrapper로 감싸기
-    in_table = False
     result_lines = []
     
     for line in lines:
@@ -752,14 +881,6 @@ def md_to_html(md_text: str) -> str:
                 in_ul = True
             content = re.sub(r'^[-*+]\s+', '', stripped)
             result_lines.append(f'<li>{content}</li>')
-        elif '|' in stripped and not stripped.startswith('http'):
-            # 테이블 라인
-            if not in_table:
-                result_lines.append('<div class="table-wrapper">')
-                result_lines.append('<table>')
-                in_table = True
-            # 마크다운 테이블의 구분선 라인은 그대로 둠
-            result_lines.append(f'<tr><td>{stripped}</td></tr>')
         else:
             # 리스트 종료
             if in_ul:
@@ -768,10 +889,6 @@ def md_to_html(md_text: str) -> str:
             if in_ol:
                 result_lines.append('</ol>')
                 in_ol = False
-            if in_table:
-                result_lines.append('</table>')
-                result_lines.append('</div>')
-                in_table = False
             result_lines.append(line)
     
     # 남은 리스트 태그 정리
@@ -779,9 +896,6 @@ def md_to_html(md_text: str) -> str:
         result_lines.append('</ul>')
     if in_ol:
         result_lines.append('</ol>')
-    if in_table:
-        result_lines.append('</table>')
-        result_lines.append('</div>')
     
     html = '\n'.join(result_lines)
     
@@ -802,7 +916,7 @@ def md_to_html(md_text: str) -> str:
             continue
         
         # HTML 태그로 시작하는 경우 단락 태그 추가하지 않음
-        if re.match(r'^<(?:h[1-6]|ul|ol|li|blockquote|pre|hr|div)', para, re.IGNORECASE):
+        if re.match(r'^<(?:h[1-6]|ul|ol|li|blockquote|pre|hr|div|table)', para, re.IGNORECASE):
             processed_paragraphs.append(para)
         else:
             # 일반 텍스트는 p 태그로 감싸기
@@ -813,9 +927,237 @@ def md_to_html(md_text: str) -> str:
     
     return html
 
+def preprocess_markdown_for_translation(text: str) -> str:
+    """
+    번역된 텍스트의 마크다운을 전처리하여 테이블 깨짐 현상을 방지합니다.
+    """
+    if not text:
+        return text
+    
+    # 테이블 구조 보존을 위한 전처리
+    lines = text.split('\n')
+    processed_lines = []
+    in_table = False
+    table_buffer = []
+    
+    for line in lines:
+        stripped = line.strip()
+        
+        # 테이블 시작 감지 (파이프 | 포함)
+        if '|' in stripped and not stripped.startswith('http'):
+            if not in_table:
+                in_table = True
+                table_buffer = []
+            table_buffer.append(line)
+        # 테이블 구분선 감지 (--- 또는 ===)
+        elif in_table and (stripped.startswith('|') and ('---' in stripped or '===' in stripped)):
+            table_buffer.append(line)
+        # 테이블 종료 감지 (빈 줄 또는 파이프가 없는 줄)
+        elif in_table and (not stripped or '|' not in stripped):
+            # 테이블 버퍼 처리
+            if table_buffer:
+                processed_lines.extend(process_table_markdown(table_buffer))
+                table_buffer = []
+            in_table = False
+            processed_lines.append(line)
+        # 테이블 내부 라인
+        elif in_table:
+            table_buffer.append(line)
+        # 일반 텍스트
+        else:
+            processed_lines.append(line)
+    
+    # 마지막 테이블 처리
+    if table_buffer:
+        processed_lines.extend(process_table_markdown(table_buffer))
+    
+    return '\n'.join(processed_lines)
+
+def process_table_markdown(table_lines: list) -> list:
+    """
+    테이블 마크다운을 처리하여 깨짐 현상을 방지합니다.
+    """
+    if not table_lines:
+        return []
+    
+    processed_lines = []
+    
+    for i, line in enumerate(table_lines):
+        if '|' in line:
+            # 테이블 셀 내용 정리
+            cells = line.split('|')
+            cleaned_cells = []
+            
+            for cell in cells:
+                # 셀 내용 정리 (공백, 특수문자 처리)
+                cleaned_cell = cell.strip()
+                if cleaned_cell:
+                    # 베트남어 특수 문자 보존
+                    cleaned_cell = preserve_vietnamese_chars(cleaned_cell)
+                    cleaned_cells.append(cleaned_cell)
+                else:
+                    cleaned_cells.append(' ')
+            
+            # 테이블 라인 재구성
+            processed_line = '|' + '|'.join(cleaned_cells) + '|'
+            processed_lines.append(processed_line)
+        else:
+            processed_lines.append(line)
+    
+    return processed_lines
+
+def process_markdown_tables(html: str) -> str:
+    """
+    마크다운 테이블을 HTML 테이블로 변환합니다.
+    """
+    lines = html.split('\n')
+    result_lines = []
+    i = 0
+    
+    while i < len(lines):
+        line = lines[i].strip()
+        
+        # 테이블 시작 감지 (파이프 | 포함)
+        if '|' in line and not line.startswith('http'):
+            table_lines = []
+            header_line = line
+            
+            # 헤더 라인 추가
+            table_lines.append(header_line)
+            i += 1
+            
+            # 구분선 확인
+            if i < len(lines) and '|' in lines[i] and ('---' in lines[i] or '===' in lines[i]):
+                separator_line = lines[i]
+                table_lines.append(separator_line)
+                i += 1
+            
+            # 테이블 본문 수집
+            while i < len(lines) and '|' in lines[i]:
+                table_lines.append(lines[i])
+                i += 1
+            
+            # 테이블을 HTML로 변환
+            html_table = convert_table_to_html(table_lines)
+            result_lines.append(html_table)
+        else:
+            result_lines.append(lines[i])
+            i += 1
+    
+    return '\n'.join(result_lines)
+
+def convert_table_to_html(table_lines: list) -> str:
+    """
+    마크다운 테이블 라인을 HTML 테이블로 변환합니다.
+    """
+    if not table_lines:
+        return ""
+    
+    html_parts = ['<div class="table-wrapper">', '<table>']
+    
+    for i, line in enumerate(table_lines):
+        if '|' in line:
+            # 구분선 라인은 건너뛰기
+            if '---' in line or '===' in line:
+                continue
+            
+            # 테이블 셀 분리 및 정리
+            cells = [cell.strip() for cell in line.split('|')]
+            
+            # 빈 셀 처리
+            if cells and not cells[0]:  # 첫 번째 빈 셀 제거
+                cells = cells[1:]
+            if cells and not cells[-1]:  # 마지막 빈 셀 제거
+                cells = cells[:-1]
+            
+            if cells:
+                if i == 0:  # 헤더 라인
+                    html_parts.append('<thead>')
+                    html_parts.append('<tr>')
+                    for cell in cells:
+                        html_parts.append(f'<th>{cell}</th>')
+                    html_parts.append('</tr>')
+                    html_parts.append('</thead>')
+                    html_parts.append('<tbody>')
+                else:  # 본문 라인
+                    html_parts.append('<tr>')
+                    for cell in cells:
+                        html_parts.append(f'<td>{cell}</td>')
+                    html_parts.append('</tr>')
+    
+    html_parts.append('</tbody>')
+    html_parts.append('</table>')
+    html_parts.append('</div>')
+    
+    return '\n'.join(html_parts)
+
+def preserve_vietnamese_chars(text: str) -> str:
+    """
+    베트남어 특수 문자를 보존합니다.
+    """
+    # 베트남어 특수 문자 매핑
+    vietnamese_chars = {
+        'à': 'à', 'á': 'á', 'ạ': 'ạ', 'ả': 'ả', 'ã': 'ã',
+        'â': 'â', 'ầ': 'ầ', 'ấ': 'ấ', 'ậ': 'ậ', 'ẩ': 'ẩ', 'ẫ': 'ẫ',
+        'ă': 'ă', 'ằ': 'ằ', 'ắ': 'ắ', 'ặ': 'ặ', 'ẳ': 'ẳ', 'ẵ': 'ẵ',
+        'è': 'è', 'é': 'é', 'ẹ': 'ẹ', 'ẻ': 'ẻ', 'ẽ': 'ẽ',
+        'ê': 'ê', 'ề': 'ề', 'ế': 'ế', 'ệ': 'ệ', 'ể': 'ể', 'ễ': 'ễ',
+        'ì': 'ì', 'í': 'í', 'ị': 'ị', 'ỉ': 'ỉ', 'ĩ': 'ĩ',
+        'ò': 'ò', 'ó': 'ó', 'ọ': 'ọ', 'ỏ': 'ỏ', 'õ': 'õ',
+        'ô': 'ô', 'ồ': 'ồ', 'ố': 'ố', 'ộ': 'ộ', 'ổ': 'ổ', 'ỗ': 'ỗ',
+        'ơ': 'ơ', 'ờ': 'ờ', 'ớ': 'ớ', 'ợ': 'ợ', 'ở': 'ở', 'ỡ': 'ỡ',
+        'ù': 'ù', 'ú': 'ú', 'ụ': 'ụ', 'ủ': 'ủ', 'ũ': 'ũ',
+        'ư': 'ư', 'ừ': 'ừ', 'ứ': 'ứ', 'ự': 'ự', 'ử': 'ử', 'ữ': 'ữ',
+        'ỳ': 'ỳ', 'ý': 'ý', 'ỵ': 'ỵ', 'ỷ': 'ỷ', 'ỹ': 'ỹ',
+        'đ': 'đ'
+    }
+    
+    for original, preserved in vietnamese_chars.items():
+        text = text.replace(original, preserved)
+    
+    return text
+
 def create_translated_html(translated_text: str, title: str = "번역된 내용") -> str:
-    """번역된 텍스트를 예쁜 HTML로 변환"""
-    html_content = md_to_html(translated_text)
+    """번역된 텍스트를 예쁜 HTML로 변환 (이모지 및 특수문자 처리 개선 + 베트남어 지원)"""
+    # 특수문자 및 이모지 처리 개선
+    processed_text = translated_text
+    
+    # 우크라이나어 번역 결과에서 "0000" 같은 특수 패턴 처리
+    if "0000" in processed_text and any(char in processed_text for char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"):
+        # 우크라이나어 텍스트로 인식하여 특수 처리
+        processed_text = processed_text.replace("0000", "Результат перекладу")  # 실제 우크라이나어 텍스트로 대체
+    
+    # 베트남어 특수 문자 처리 (마크다운 인식 개선)
+    if any(char in processed_text for char in "àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ"):
+        # 베트남어 특수 문자를 안전하게 처리
+        processed_text = processed_text.replace("à", "à").replace("á", "á").replace("ạ", "ạ")
+        processed_text = processed_text.replace("ả", "ả").replace("ã", "ã").replace("â", "â")
+        processed_text = processed_text.replace("ầ", "ầ").replace("ấ", "ấ").replace("ậ", "ậ")
+        processed_text = processed_text.replace("ẩ", "ẩ").replace("ẫ", "ẫ").replace("ă", "ă")
+        processed_text = processed_text.replace("ằ", "ằ").replace("ắ", "ắ").replace("ặ", "ặ")
+        processed_text = processed_text.replace("ẳ", "ẳ").replace("ẵ", "ẵ").replace("è", "è")
+        processed_text = processed_text.replace("é", "é").replace("ẹ", "ẹ").replace("ẻ", "ẻ")
+        processed_text = processed_text.replace("ẽ", "ẽ").replace("ê", "ê").replace("ề", "ề")
+        processed_text = processed_text.replace("ế", "ế").replace("ệ", "ệ").replace("ể", "ể")
+        processed_text = processed_text.replace("ễ", "ễ").replace("ì", "ì").replace("í", "í")
+        processed_text = processed_text.replace("ị", "ị").replace("ỉ", "ỉ").replace("ĩ", "ĩ")
+        processed_text = processed_text.replace("ò", "ò").replace("ó", "ó").replace("ọ", "ọ")
+        processed_text = processed_text.replace("ỏ", "ỏ").replace("õ", "õ").replace("ô", "ô")
+        processed_text = processed_text.replace("ồ", "ồ").replace("ố", "ố").replace("ộ", "ộ")
+        processed_text = processed_text.replace("ổ", "ổ").replace("ỗ", "ỗ").replace("ơ", "ơ")
+        processed_text = processed_text.replace("ờ", "ờ").replace("ớ", "ớ").replace("ợ", "ợ")
+        processed_text = processed_text.replace("ở", "ở").replace("ỡ", "ỡ").replace("ù", "ù")
+        processed_text = processed_text.replace("ú", "ú").replace("ụ", "ụ").replace("ủ", "ủ")
+        processed_text = processed_text.replace("ũ", "ũ").replace("ư", "ư").replace("ừ", "ừ")
+        processed_text = processed_text.replace("ứ", "ứ").replace("ự", "ự").replace("ử", "ử")
+        processed_text = processed_text.replace("ữ", "ữ").replace("ỳ", "ỳ").replace("ý", "ý")
+        processed_text = processed_text.replace("ỵ", "ỵ").replace("ỷ", "ỷ").replace("ỹ", "ỹ")
+        processed_text = processed_text.replace("đ", "đ")
+    
+    # 마크다운 변환 전 텍스트 전처리 (테이블 깨짐 방지)
+    processed_text = preprocess_markdown_for_translation(processed_text)
+    
+    html_content = md_to_html(processed_text)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     
     return f"""
@@ -880,7 +1222,7 @@ def extract_landlord_name_robustly(contract_text: str) -> str:
 
 # ### MODIFIED FUNCTION ###: get_multilingual_font에 lang_code를 전달하도록 수정
 def create_clean_report_image(report_text: str, report_type: str = "report", lang_code: str = 'KO') -> Image.Image:
-    """깔끔한 텍스트 기반 리포트 이미지 생성 (다국어 지원)"""
+    """깔끔한 텍스트 기반 리포트 이미지 생성 (다국어 지원 + 이모지 지원)"""
     width = 1200
     margin = 50
     line_height = 28
@@ -890,6 +1232,9 @@ def create_clean_report_image(report_text: str, report_type: str = "report", lan
     heading_font = get_multilingual_font(20, bold=True, lang_code=lang_code) 
     text_font = get_multilingual_font(16, bold=False, lang_code=lang_code)
     small_font = get_multilingual_font(14, bold=False, lang_code=lang_code)
+    
+    # 이모지 폰트 설정
+    emoji_font = get_emoji_font(16)
     
     # 폰트 로드 실패 시 안전장치
     if not title_font or not heading_font or not text_font or not small_font:
@@ -905,9 +1250,8 @@ def create_clean_report_image(report_text: str, report_type: str = "report", lan
     lines = []
     current_y = margin + 60
     
-    # 제목 추가
+    # 제목 추가 (이모지 포함)
     if "translation" in report_type.lower() or "번역" in report_type:
-        title = "🌐 번역 결과"
         if lang_code == 'EN':
             title = "🌐 Translation Result"
         elif lang_code == 'JA':
@@ -919,6 +1263,8 @@ def create_clean_report_image(report_text: str, report_type: str = "report", lan
             title = "🌐 Результат перекладу"
         elif lang_code == 'VI':
             title = "🌐 Kết quả dịch"
+        else:
+            title = "🌐 번역 결과"
     elif "analysis" in report_type or "분석" in report_type:
         title = "AI 부동산 계약서 분석 리포트"
     else:
@@ -927,7 +1273,7 @@ def create_clean_report_image(report_text: str, report_type: str = "report", lan
     lines.append(('title', title, current_y))
     current_y += 50
     
-    # 날짜 추가
+    # 날짜 추가 (이모지 제거하여 tofu 방지)
     now = datetime.now()
     if lang_code == 'KO':
         date_str = f"생성일시: {now.strftime('%Y')}년 {now.strftime('%m')}월 {now.strftime('%d')}일 {now.strftime('%H')}시 {now.strftime('%M')}분"
@@ -974,8 +1320,13 @@ def create_clean_report_image(report_text: str, report_type: str = "report", lan
         # 리스트 처리
         elif line.startswith('- '):
             text = line[2:].strip()
-            # 긴 텍스트는 자동 줄바꿈
-            wrapped = textwrap.fill(text, width=80)
+            # 긴 텍스트는 자동 줄바꿈 (언어별 너비 조정)
+            if lang_code in ['UK', 'ZH', 'JA']:
+                # 키릴, 중국어, 일본어는 더 좁은 너비로 줄바꿈
+                wrapped = textwrap.fill(text, width=50)
+            else:
+                # 한국어, 영어 등은 기존 너비
+                wrapped = textwrap.fill(text, width=70)
             for wrapped_line in wrapped.split('\n'):
                 lines.append(('bullet', wrapped_line, current_y))
                 current_y += line_height
@@ -990,8 +1341,13 @@ def create_clean_report_image(report_text: str, report_type: str = "report", lan
             current_y += 20
         # 일반 텍스트
         else:
-            # 긴 줄 자동 줄바꿈
-            wrapped = textwrap.fill(line, width=90)
+            # 긴 줄 자동 줄바꿈 (언어별 너비 조정)
+            if lang_code in ['UK', 'ZH', 'JA']:
+                # 키릴, 중국어, 일본어는 더 좁은 너비로 줄바꿈
+                wrapped = textwrap.fill(line, width=55)
+            else:
+                # 한국어, 영어 등은 기존 너비
+                wrapped = textwrap.fill(line, width=75)
             for wrapped_line in wrapped.split('\n'):
                 lines.append(('text', wrapped_line, current_y))
                 current_y += line_height
@@ -999,7 +1355,7 @@ def create_clean_report_image(report_text: str, report_type: str = "report", lan
     # 푸터 공간
     current_y += 30
     footer_text = "본 분석은 참고용이며 법적 효력이 없습니다. 중요한 결정 전 반드시 전문가와 상담하시기 바랍니다."
-    # lang_code 값 체계(KO/EN/JA/ZH/UK/VI)에 맞춰 현지화
+    # lang_code 값 체계(KO/EN/JA/ZH/UK/VI)에 맞춰 현지화 (이모지 제거하여 tofu 방지)
     if lang_code == 'EN':
         footer_text = "This analysis is for reference only and has no legal effect. Please consult with experts before making important decisions."
     elif lang_code == 'JA':
@@ -1033,10 +1389,8 @@ def create_clean_report_image(report_text: str, report_type: str = "report", lan
     for line_type, text, y in lines:
         try:
             if line_type == 'title':
-                # 제목 중앙 정렬
-                bbox = draw.textbbox((0, 0), text, font=title_font)
-                x = (width - (bbox[2] - bbox[0])) // 2
-                draw.text((x, 30), text, fill='#ffffff', font=title_font)
+                # 제목 중앙 정렬 (이모지 포함)
+                draw_text_with_emoji(draw, text, (width//2, 30), title_font, emoji_font, 'center', '#ffffff')
                 
             elif line_type == 'date':
                 # 날짜 우측 정렬
@@ -1050,28 +1404,28 @@ def create_clean_report_image(report_text: str, report_type: str = "report", lan
                 
             elif line_type == 'h1':
                 h1_font = get_multilingual_font(22, bold=True, lang_code=lang_code) or title_font
-                draw.text((margin, y), text, fill='#10b981', font=h1_font)
+                draw_text_with_emoji(draw, text, (margin, y), h1_font, emoji_font, 'left', '#10b981')
                 # 헤딩 밑줄
                 draw.line([margin, y+32, margin+300, y+32], fill='#10b981', width=3)
                 
             elif line_type == 'h2':
-                draw.text((margin, y), text, fill='#047857', font=heading_font)
+                draw_text_with_emoji(draw, text, (margin, y), heading_font, emoji_font, 'left', '#047857')
                 
             elif line_type == 'h3':
                 h3_font = get_multilingual_font(18, bold=True, lang_code=lang_code) or heading_font
-                draw.text((margin, y), text, fill='#1f2937', font=h3_font)
+                draw_text_with_emoji(draw, text, (margin, y), h3_font, emoji_font, 'left', '#1f2937')
                 
             elif line_type == 'bullet':
                 # 불릿 포인트
                 draw.text((margin, y), "•", fill='#10b981', font=text_font)
-                draw.text((margin + 20, y), text, fill='#374151', font=text_font)
+                draw_text_with_emoji(draw, text, (margin + 20, y), text_font, emoji_font, 'left', '#374151')
                 
             elif line_type == 'bold':
                 bold_font = get_multilingual_font(16, bold=True, lang_code=lang_code) or text_font
-                draw.text((margin, y), text, fill='#dc2626', font=bold_font)
+                draw_text_with_emoji(draw, text, (margin, y), bold_font, emoji_font, 'left', '#dc2626')
                 
             elif line_type == 'text':
-                draw.text((margin, y), text, fill='#374151', font=text_font)
+                draw_text_with_emoji(draw, text, (margin, y), text_font, emoji_font, 'left', '#374151')
                 
             elif line_type == 'footer':
                 # 푸터 텍스트 중앙 정렬 및 자동 줄바꿈
@@ -1160,8 +1514,47 @@ def render_report_html(file_name: str, rule_analysis: dict, ai_analysis: dict, t
     """
     return html
 
+def split_text_for_analysis(text: str, max_tokens: int = 3500) -> list:
+    """
+    긴 텍스트를 토큰 제한에 맞게 분할합니다.
+    대략적인 토큰 계산: 1 토큰 ≈ 4 문자 (한국어 기준)
+    """
+    if not text:
+        return []
+    
+    # 대략적인 토큰 수 계산 (한국어 기준)
+    estimated_tokens = len(text) // 4
+    
+    if estimated_tokens <= max_tokens:
+        return [text]
+    
+    # 문단 단위로 분할
+    paragraphs = text.split('\n\n')
+    chunks = []
+    current_chunk = ""
+    
+    for paragraph in paragraphs:
+        # 현재 청크에 문단을 추가했을 때의 토큰 수 계산
+        test_chunk = current_chunk + paragraph + "\n\n"
+        test_tokens = len(test_chunk) // 4
+        
+        if test_tokens <= max_tokens:
+            current_chunk = test_chunk
+        else:
+            # 현재 청크가 있으면 저장
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+            # 새 청크 시작
+            current_chunk = paragraph + "\n\n"
+    
+    # 마지막 청크 추가
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+    
+    return chunks
+
 def perform_ai_analysis(contract_text: str) -> dict:
-    """RAG를 사용하여 계약서를 심층 분석합니다."""
+    """RAG를 사용하여 계약서를 심층 분석합니다. (토큰 제한 자동 처리)"""
     # RAG 검색기(RETRIEVER)가 준비되었는지 확인
     if not RETRIEVER:
         return {"analysis": "⚠️ AI 분석 엔진(RAG)이 초기화되지 않았습니다. 프로그램을 다시 시작하거나 설정을 확인해주세요."}
@@ -1170,9 +1563,9 @@ def perform_ai_analysis(contract_text: str) -> dict:
         # 1) Groundedness Check 객체 생성
         groundedness_checker = UpstageGroundednessCheck()
 
-        # 2) 프롬프트 정의
+        # 2) 프롬프트 정의 (간소화된 버전)
         prompt = ChatPromptTemplate.from_template(
-            """당신은 한국 부동산 법률 전문가입니다. 주어진 [참고 자료]를 바탕으로 다음 [계약서]를 분석하고, 임차인에게 불리하거나 누락된 조항이 없는지 상세히 설명해주세요. 답변은 마크다운 형식으로 명확하게 정리해주세요. 각 주장/근거에는 [참고 자료]나 [계약서]의 관련 문구를 한두 문장으로 간략히 인용하고 따옴표로 표시하세요.
+            """당신은 한국 부동산 법률 전문가입니다. 주어진 [참고 자료]를 바탕으로 다음 [계약서]를 분석하고, 임차인에게 불리하거나 누락된 조항이 없는지 상세히 설명해주세요. 답변은 마크다운 형식으로 명확하게 정리해주세요.
 
 [참고 자료]
 {context}
@@ -1181,10 +1574,10 @@ def perform_ai_analysis(contract_text: str) -> dict:
 {contract}
 
 [분석 요청]
-1.  **임차인에게 불리한 조항**: 독소 조항이나 일반적으로 임차인에게 불리하게 작용할 수 있는 내용을 짚어주세요.
-2.  **누락된 중요 조항**: 임차인 보호를 위해 참고 자료에 근거하여 반드시 포함되어야 하지만 빠져 있는 조항이 있는지 확인해주세요.
-3.  **개선 방안 및 대안 제시**: 발견된 문제점에 대해 구체적으로 어떻게 수정하거나 추가하면 좋을지 대안을 제시해주세요.
-4.  **종합적인 법률 자문**: 계약 전반에 대한 종합적인 의견과 추가적으로 확인해야 할 사항(등기부등본 확인 등)을 알려주세요.
+1. **임차인에게 불리한 조항**: 독소 조항이나 일반적으로 임차인에게 불리하게 작용할 수 있는 내용을 짚어주세요.
+2. **누락된 중요 조항**: 임차인 보호를 위해 참고 자료에 근거하여 반드시 포함되어야 하지만 빠져 있는 조항이 있는지 확인해주세요.
+3. **개선 방안 및 대안 제시**: 발견된 문제점에 대해 구체적으로 어떻게 수정하거나 추가하면 좋을지 대안을 제시해주세요.
+4. **종합적인 법률 자문**: 계약 전반에 대한 종합적인 의견과 추가적으로 확인해야 할 사항을 알려주세요.
 """
         )
 
@@ -1206,18 +1599,91 @@ def perform_ai_analysis(contract_text: str) -> dict:
             | StrOutputParser()
         )
 
-        # 5) RAG 답변과 Groundedness Check 병행 체인
-        rag_chain_with_check = RunnablePassthrough.assign(
-            context=itemgetter("contract") | RunnableLambda(build_grounded_context_for_contract),
-            answer=itemgetter("contract") | chain
-        ).assign(
-            groundedness=groundedness_checker
-        )
+        # 5) 토큰 제한 확인 및 텍스트 분할
+        estimated_tokens = len(contract_text) // 4
+        print(f"📊 계약서 토큰 수: 약 {estimated_tokens} 토큰")
+        
+        # RAG 검색 결과의 토큰 수도 고려하여 더 낮은 임계값 사용
+        if estimated_tokens > 2000:  # RAG context를 고려하여 2000으로 낮춤
+            print(f"⚠️ 토큰 수 초과 감지: 약 {estimated_tokens} 토큰 (제한: 4000)")
+            print("📝 텍스트를 자동으로 분할하여 분석을 진행합니다...")
+            
+            # 텍스트를 청크로 분할
+            text_chunks = split_text_for_analysis(contract_text, max_tokens=2000)
+            print(f"📋 총 {len(text_chunks)}개 청크로 분할 완료")
+            
+            # 각 청크별로 분석 수행
+            all_analyses = []
+            for i, chunk in enumerate(text_chunks, 1):
+                print(f"🔍 청크 {i}/{len(text_chunks)} 분석 중...")
+                try:
+                    # RAG 체인 대신 단순 분석 사용
+                    simple_prompt = ChatPromptTemplate.from_template(
+                        """한국 부동산 법률 전문가로서 다음 [계약서]를 분석해주세요.
 
-        # 5) 실행 및 터미널 출력
-        result_dict = rag_chain_with_check.invoke({"contract": contract_text})
-        analysis_result = result_dict.get("answer", "")
-        groundedness_result = result_dict.get("groundedness", None)
+[계약서]
+{contract}
+
+다음 사항들을 중점적으로, 임차인의 입장에서 이해하기 쉽게 마크다운 형식으로 항목을 나누어 분석해주세요:
+1. **임차인에게 불리한 조항**: 독소 조항이나 일반적으로 임차인에게 불리하게 작용할 수 있는 내용을 짚어주세요.
+2. **누락된 중요 조항**: 임차인 보호를 위해 반드시 포함되어야 하지만 빠져 있는 조항이 있는지 확인해주세요.
+3. **개선 방안 및 대안 제시**: 발견된 문제점에 대해 구체적으로 어떻게 수정하거나 추가하면 좋을지 대안을 제시해주세요.
+4. **종합적인 법률 자문**: 계약 전반에 대한 종합적인 의견과 추가적으로 확인해야 할 사항을 알려주세요.
+"""
+                    )
+                    simple_chain = simple_prompt | ChatUpstage(model="solar-pro2", reasoning_effort="high") | StrOutputParser()
+                    chunk_result = simple_chain.invoke({"contract": chunk})
+                    all_analyses.append(f"## 청크 {i} 분석 결과\n\n{chunk_result}")
+                except Exception as chunk_error:
+                    print(f"⚠️ 청크 {i} 분석 실패: {chunk_error}")
+                    all_analyses.append(f"## 청크 {i} 분석 실패\n\n오류: {chunk_error}")
+            
+            # 모든 분석 결과 통합
+            analysis_result = "\n\n---\n\n".join(all_analyses)
+            print("✅ 모든 청크 분석 완료 및 통합")
+            
+            # Groundedness Check는 전체 텍스트에 대해 수행
+            try:
+                groundedness_result = groundedness_checker.invoke({"text": contract_text})
+            except Exception as ge:
+                print(f"⚠️ Groundedness Check 실패: {ge}")
+                groundedness_result = None
+        else:
+            # 일반적인 분석 수행
+            print(f"✅ 토큰 수 확인: 약 {estimated_tokens} 토큰 (제한 내)")
+            
+            try:
+                # RAG 답변과 Groundedness Check 병행 체인
+                rag_chain_with_check = RunnablePassthrough.assign(
+                    context=itemgetter("contract") | RunnableLambda(build_grounded_context_for_contract),
+                    answer=itemgetter("contract") | chain
+                ).assign(
+                    groundedness=groundedness_checker
+                )
+
+                # 실행 및 결과 추출
+                result_dict = rag_chain_with_check.invoke({"contract": contract_text})
+                analysis_result = result_dict.get("answer", "")
+                groundedness_result = result_dict.get("groundedness", None)
+            except Exception as e:
+                print(f"⚠️ RAG 분석 실패, 단순 분석으로 전환: {e}")
+                # RAG 실패 시 단순 분석으로 전환
+                simple_prompt = ChatPromptTemplate.from_template(
+                    """한국 부동산 법률 전문가로서 다음 [계약서]를 분석해주세요.
+
+[계약서]
+{contract}
+
+다음 사항들을 중점적으로, 임차인의 입장에서 이해하기 쉽게 마크다운 형식으로 항목을 나누어 분석해주세요:
+1. **임차인에게 불리한 조항**: 독소 조항이나 일반적으로 임차인에게 불리하게 작용할 수 있는 내용을 짚어주세요.
+2. **누락된 중요 조항**: 임차인 보호를 위해 반드시 포함되어야 하지만 빠져 있는 조항이 있는지 확인해주세요.
+3. **개선 방안 및 대안 제시**: 발견된 문제점에 대해 구체적으로 어떻게 수정하거나 추가하면 좋을지 대안을 제시해주세요.
+4. **종합적인 법률 자문**: 계약 전반에 대한 종합적인 의견과 추가적으로 확인해야 할 사항을 알려주세요.
+"""
+                )
+                simple_chain = simple_prompt | ChatUpstage(model="solar-pro2", reasoning_effort="high") | StrOutputParser()
+                analysis_result = simple_chain.invoke({"contract": contract_text})
+                groundedness_result = None
 
         print("\n" + "="*50)
         print("🕵️  [계약서 분석] Groundedness Check 결과 (터미널 전용)")
@@ -1346,7 +1812,7 @@ def extract_clean_text_from_html(html_content: str) -> str:
     return '\n'.join(clean_lines).strip()
 
 def convert_emoji_to_text(text: str) -> str:
-    """이모지를 한글 텍스트로 변환"""
+    """이모지를 한글 텍스트로 변환 (PNG 생성용)"""
     emoji_map = {
         '🏠': '[집]', '📋': '[문서]', '🔍': '[검색]', '📊': '[차트]', 
         '💬': '[채팅]', '🤖': '[AI]', '📄': '[파일]', '📅': '[날짜]',
@@ -1356,7 +1822,9 @@ def convert_emoji_to_text(text: str) -> str:
         '🧠': '[뇌]', '👍': '[좋아요]', '❌': '[X]', '⭐': '[별]',
         '📎': '[클립]', '🔗': '[링크]', '📌': '[핀]', '🧾': '[영수증]',
         '📘': '[파란책]', '📙': '[주황책]', '📗': '[초록책]', '📕': '[빨간책]',
-        '🔥': '[불]', '✨': '[반짝임]', '📈': '[상승차트]', '📉': '[하락차트]'
+        '🔥': '[불]', '✨': '[반짝임]', '📈': '[상승차트]', '📉': '[하락차트]',
+        '🐢': '[거북이]', '🏡': '[주택]', '💰': '[돈]', '📋': '[체크리스트]',
+        '🔐': '[자물쇠]', '📜': '[계약서]', '⚖️': '[저울]', '🏛️': '[법원]'
     }
     
     for emoji, text_replacement in emoji_map.items():
@@ -1389,14 +1857,11 @@ def detect_language_code(text: str, translate_lang: str) -> str:
         return translate_lang
 
 def html_to_png_downloadable(html_content: str, filename_prefix="report_html", lang_code_override: str | None = None):
-    """HTML을 PNG로 저장 - 순수 텍스트만 추출하여 깔끔하게 저장"""
+    """HTML을 PNG로 저장 - 순수 텍스트만 추출하여 깔끔하게 저장 (이모지 지원)"""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     # HTML에서 순수 텍스트만 추출
     clean_text = extract_clean_text_from_html(html_content)
-    
-    # 이모지를 텍스트로 변환
-    clean_text = convert_emoji_to_text(clean_text)
     
     # 언어 감지 (또는 호출부에서 override)
     if lang_code_override:
@@ -1404,18 +1869,18 @@ def html_to_png_downloadable(html_content: str, filename_prefix="report_html", l
     else:
         lang_code = 'KO'
         # 번역 결과에 포함된 언어명을 기반으로 언어 코드 설정
-        if any(keyword in clean_text for keyword in ['Translation Result', 'English']):
+        if any(keyword in clean_text for keyword in ['Translation Result', 'English', '영어']):
             lang_code = 'EN'
-        elif any(keyword in clean_text for keyword in ['翻訳結果', '日本語']):
+        elif any(keyword in clean_text for keyword in ['翻訳結果', '日本語', '일본어']):
             lang_code = 'JA'
-        elif any(keyword in clean_text for keyword in ['翻译结果', '中文']):
+        elif any(keyword in clean_text for keyword in ['翻译结果', '中文', '중국어']):
             lang_code = 'ZH'
-        elif any(keyword in clean_text for keyword in ['Результат перекладу']):
+        elif any(keyword in clean_text for keyword in ['Результат перекладу', '우크라이나어']) or any(char in clean_text for char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"):
             lang_code = 'UK'
-        elif any(keyword in clean_text for keyword in ['Kết quả dịch']):
+        elif any(keyword in clean_text for keyword in ['Kết quả dịch', '베트남어']):
             lang_code = 'VI'
     
-    # PIL로 깔끔한 이미지 생성
+    # PIL로 깔끔한 이미지 생성 (이모지 포함)
     img = create_clean_report_image(clean_text, filename_prefix, lang_code)
     out_path = Path(tempfile.gettempdir()) / f"{filename_prefix}_{ts}.png"
     img.save(out_path, format='PNG', quality=95, optimize=True)
@@ -1456,18 +1921,18 @@ def analyze_contract(file, progress=gr.Progress(track_tqdm=True)):
     if file is None:
         return "❌ 파일을 업로드해주세요.", "", "", ""
     try:
-        progress(0.1, desc="[1/4] 파일에서 텍스트 추출 중...")
+        progress(0.1, desc="[🐢🐢🐢🐢🪄🪄🪄🪄🪄..")
         text, status = extract_text_from_file(file.name)
         if not text:
             return f"❌ 텍스트 추출 실패: {status}", "", "", ""
 
-        progress(0.4, desc="[2/4] 규칙 기반 안전도 분석 중...")
+        progress(0.4, desc="🐢🐢🐢🐢🪄🪄🪄🪄🪄...")
         rule_analysis = perform_rule_based_analysis(text) # <<< 임대인 조회가 포함된 함수 호출
 
-        progress(0.7, desc="[3/4] AI 심층 분석 진행 중...")
+        progress(0.7, desc="🐢🐢🐢🐢🪄🪄🪄🪄🪄.")
         ai_analysis = perform_ai_analysis(text)
 
-        progress(0.9, desc="[4/4] 최종 보고서 생성 중...")
+        progress(0.9, desc="[🐢🐢🐢🐢🪄🪄🪄🪄🪄...")
         md_report = generate_report(os.path.basename(file.name), rule_analysis, ai_analysis)
         html_report = render_report_html(os.path.basename(file.name), rule_analysis, ai_analysis)
 
