@@ -114,8 +114,12 @@ FONT_URLS = {
     # Noto Sans SC (중국어 간체) - TTF 파일로 수정
     "NotoSansSC-Regular.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
     "NotoSansSC-Bold.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf",
-    # Noto Color Emoji (이모지 지원)
+    # Noto Color Emoji (이모지 지원) - 주 이모지 폰트
     "NotoColorEmoji-Regular.ttf": "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf",
+    # 추가 이모지 폰트 (백업용)
+    "NotoColorEmoji.ttf": "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf",
+    # Twemoji (Twitter 이모지 - SVG 기반, 가벼움)
+    "TwitterColorEmoji.ttf": "https://github.com/twitter/twemoji/releases/download/v14.0.2/TwitterColorEmoji-SVGinOT.ttf",
     # Noto Sans (우크라이나어 키릴 문자 지원) - 추가
     "NotoSans-{style}.ttf": "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf"
 }
@@ -156,7 +160,20 @@ def setup_fonts():
         except Exception as e:
             print(f"  ❌ '{font_name}' 폰트 다운로드 실패: {e}")
             if font_path.exists():
-                font_path.unlink() # 실패 시 불완전한 파일 삭제
+                # 파일 크기 확인 후 삭제 여부 결정
+                try:
+                    file_size = font_path.stat().st_size
+                    if file_size < 10240:  # 10KB 미만이면 불완전한 파일로 간주
+                        font_path.unlink()
+                        print(f"    - 불완전한 파일 삭제됨 ({file_size} bytes)")
+                    else:
+                        print(f"    - 부분 다운로드 파일 유지됨 ({file_size} bytes)")
+                except Exception as cleanup_error:
+                    print(f"    - 파일 정리 중 오류: {cleanup_error}")
+                    try:
+                        font_path.unlink()
+                    except:
+                        pass
     
     # OTF 파일을 TTF로 변환 시도
     print("  - OTF 파일을 TTF로 변환 시도 중...")
@@ -250,7 +267,10 @@ def get_multilingual_font(size=16, bold=False, lang_code='KO'):
     """
     로컬 ./fonts 폴더에 다운로드된 Noto 폰트를 사용하여 다국어 텍스트 렌더링을 지원합니다.
     언어 코드에 따라 적절한 폰트 파일을 선택하여 tofu 현상을 방지합니다.
+    픽셀 크기 안전성을 강화했습니다.
     """
+    # 안전한 픽셀 크기 범위 적용 (8-72)
+    safe_size = max(8, min(72, size))
     style = "Bold" if bold else "Regular"
     
     # 언어 코드에 따른 폰트 파일 매핑 (TTF 우선, OTF 폴백)
@@ -272,9 +292,20 @@ def get_multilingual_font(size=16, bold=False, lang_code='KO'):
         font_path = FONTS_DIR / font_filename
         if font_path.exists():
             try:
-                return ImageFont.truetype(str(font_path), size)
+                return ImageFont.truetype(str(font_path), safe_size)
+            except (OSError, IOError) as e:
+                if "invalid pixel size" in str(e).lower():
+                    print(f"⚠️ 폰트 '{font_filename}' 픽셀 크기 오류, 기본 크기로 재시도: {e}")
+                    try:
+                        return ImageFont.truetype(str(font_path), 16)
+                    except Exception as e2:
+                        print(f"⚠️ 폰트 '{font_filename}' 기본 크기 로드도 실패: {e2}")
+                        continue
+                else:
+                    print(f"⚠️ 폰트 로드 실패 '{font_filename}': {e}")
+                    continue
             except Exception as e:
-                print(f"⚠️ 폰트 로드 실패 '{font_filename}': {e}")
+                print(f"⚠️ 폰트 로드 중 알 수 없는 오류 '{font_filename}': {e}")
                 continue
     
     # 모든 후보 폰트가 실패한 경우 폴백 시도
@@ -287,43 +318,182 @@ def get_multilingual_font(size=16, bold=False, lang_code='KO'):
         if fallback_path.exists():
             try:
                 print(f"⚠️ 경고: 요청된 폰트를 찾을 수 없어 '{fallback_path.name}'로 대체합니다.")
-                return ImageFont.truetype(str(fallback_path), size)
+                return ImageFont.truetype(str(fallback_path), safe_size)
+            except (OSError, IOError) as e:
+                if "invalid pixel size" in str(e).lower():
+                    print(f"⚠️ 폴백 폰트 '{fallback_path.name}' 픽셀 크기 오류, 기본 크기로 재시도: {e}")
+                    try:
+                        return ImageFont.truetype(str(fallback_path), 16)
+                    except Exception as e2:
+                        print(f"⚠️ 폴백 폰트 '{fallback_path.name}' 기본 크기 로드도 실패: {e2}")
+                        continue
+                else:
+                    print(f"⚠️ 폴백 폰트 로드 실패 '{fallback_path.name}': {e}")
+                    continue
             except Exception as e:
-                print(f"⚠️ 폴백 폰트 로드 실패 '{fallback_path.name}': {e}")
+                print(f"⚠️ 폴백 폰트 로드 중 알 수 없는 오류 '{fallback_path.name}': {e}")
                 continue
     
-    # 최후의 수단
+    # 최후의 수단 - 시스템 기본 폰트
     print("❌ 모든 폰트 로드 실패. PIL 기본 폰트를 사용합니다. 글자가 깨질 수 있습니다.")
     try:
         return ImageFont.load_default()
-    except Exception:
+    except Exception as e:
+        print(f"❌ 기본 폰트 로드도 실패: {e}")
         return None
+
+def get_system_emoji_fonts():
+    """시스템에서 이모지 폰트 경로를 찾습니다."""
+    system_emoji_fonts = []
+    
+    # Windows 시스템 폰트 경로
+    windows_fonts = [
+        Path("C:/Windows/Fonts/seguiemj.ttf"),
+        Path("C:/Windows/Fonts/NotoColorEmoji.ttf"),
+        Path("C:/Windows/Fonts/seguisym.ttf"),
+    ]
+    
+    # macOS 시스템 폰트 경로
+    macos_fonts = [
+        Path("/System/Library/Fonts/Apple Color Emoji.ttc"),
+        Path("/Library/Fonts/Apple Color Emoji.ttc"),
+        Path("/System/Library/Fonts/NotoColorEmoji.ttf"),
+    ]
+    
+    # Linux 시스템 폰트 경로
+    linux_fonts = [
+        Path("/usr/share/fonts/truetype/noto-color-emoji/NotoColorEmoji.ttf"),
+        Path("/usr/share/fonts/TTF/NotoColorEmoji.ttf"),
+        Path("/usr/local/share/fonts/NotoColorEmoji.ttf"),
+    ]
+    
+    for font_path in windows_fonts + macos_fonts + linux_fonts:
+        if font_path.exists():
+            system_emoji_fonts.append(font_path)
+    
+    return system_emoji_fonts
 
 def get_emoji_font(size=16):
     """
     이모지 전용 폰트를 로드합니다.
+    다양한 폰트 파일과 크기 옵션을 시도하여 robust하게 처리합니다.
     """
-    emoji_font_path = FONTS_DIR / "NotoColorEmoji-Regular.ttf"
-    if emoji_font_path.exists():
-        try:
-            return ImageFont.truetype(str(emoji_font_path), size)
-        except Exception as e:
-            print(f"⚠️ 이모지 폰트 로드 실패: {e}")
-    return None
+    # 안전한 픽셀 크기 범위 적용 (8-72)
+    safe_size = max(8, min(72, size))
+    
+    # 이모지 폰트 후보들 (우선순위 순)
+    emoji_font_candidates = [
+        FONTS_DIR / "NotoColorEmoji-Regular.ttf",
+        FONTS_DIR / "NotoColorEmoji.ttf",
+        FONTS_DIR / "AppleColorEmoji.ttc",  # macOS 시스템 폰트
+        FONTS_DIR / "seguiemj.ttf",        # Windows 시스템 폰트
+        FONTS_DIR / "TwitterColorEmoji.ttf", # 대체 이모지 폰트
+    ]
+    
+    # 시스템 이모지 폰트도 추가
+    emoji_font_candidates.extend(get_system_emoji_fonts())
+    
+    # 여러 크기 옵션 시도 (픽셀 크기 문제 해결)
+    size_options = [safe_size, 16, 14, 12, 18, 20, 24]
+    
+    for font_path in emoji_font_candidates:
+        if font_path.exists():
+            # 폰트 파일 기본 검증
+            try:
+                file_size = font_path.stat().st_size
+                if file_size < 1024:  # 1KB 미만이면 손상된 파일일 가능성
+                    print(f"⚠️ 이모지 폰트 '{font_path.name}' 파일 크기가 너무 작음 ({file_size} bytes) - 건너뜀")
+                    continue
+            except Exception as e:
+                print(f"⚠️ 이모지 폰트 '{font_path.name}' 파일 상태 확인 실패: {e}")
+                continue
+            
+            for try_size in size_options:
+                try:
+                    font = ImageFont.truetype(str(font_path), try_size)
+                    
+                    # 폰트 로드 후 간단한 검증 (이모지 렌더링 테스트)
+                    try:
+                        # 간단한 텍스트로 폰트 기능 테스트
+                        test_img = Image.new('RGB', (50, 50), 'white')
+                        test_draw = ImageDraw.Draw(test_img)
+                        test_draw.text((10, 10), "🎉", font=font, fill='black')
+                        
+                        if try_size != safe_size:
+                            print(f"💡 이모지 폰트 '{font_path.name}' 크기 {safe_size}→{try_size}로 조정하여 로드 성공")
+                        else:
+                            print(f"✅ 이모지 폰트 '{font_path.name}' 로드 성공 (크기: {try_size})")
+                        return font
+                    except Exception as test_e:
+                        print(f"⚠️ 이모지 폰트 '{font_path.name}' 렌더링 테스트 실패: {test_e}")
+                        # 렌더링 테스트 실패해도 폰트는 반환 (일부 기능만 제한될 수 있음)
+                        return font
+                        
+                except (OSError, IOError) as e:
+                    if "invalid pixel size" in str(e).lower():
+                        # 다음 크기로 시도
+                        continue
+                    elif "cannot load font" in str(e).lower():
+                        print(f"⚠️ 이모지 폰트 '{font_path.name}' 손상됨 - 다른 폰트로 시도")
+                        break  # 다른 폰트로 시도
+                    else:
+                        print(f"⚠️ 이모지 폰트 '{font_path.name}' 크기 {try_size} 로드 실패: {e}")
+                        break  # 다른 폰트로 시도
+                except Exception as e:
+                    print(f"⚠️ 이모지 폰트 '{font_path.name}' 크기 {try_size} 로드 중 오류: {e}")
+                    break  # 다른 폰트로 시도
+    
+    # 모든 이모지 폰트 실패 시 일반 다국어 폰트로 대체
+    print("⚠️ 모든 이모지 폰트 로드 실패. 일반 폰트로 대체합니다.")
+    fallback_fonts = [
+        FONTS_DIR / "NotoSans-Regular.ttf",
+        FONTS_DIR / "NotoSansKR-Regular.ttf", 
+        FONTS_DIR / "NotoSansKR-Regular.otf"
+    ]
+    
+    for fallback_path in fallback_fonts:
+        if fallback_path.exists():
+            for try_size in [14, 12, 16, 18]:  # 더 보수적인 크기들
+                try:
+                    font = ImageFont.truetype(str(fallback_path), try_size)
+                    print(f"💡 이모지 대체 폰트 '{fallback_path.name}' 로드 성공 (크기: {try_size})")
+                    return font
+                except:
+                    continue
+    
+    # 최후의 수단 - PIL 기본 폰트
+    print("⚠️ 모든 폰트 로드 실패. PIL 기본 폰트를 사용합니다.")
+    try:
+        return ImageFont.load_default()
+    except Exception as e:
+        print(f"❌ 기본 폰트 로드도 실패: {e}")
+        return None
 
 def draw_text_with_emoji(draw, text, position, main_font, emoji_font, align='left', color='#000000'):
     """
     이모지와 일반 텍스트를 혼합하여 렌더링합니다.
     align: 'left', 'center', 'right'
+    안전성과 호환성을 강화했습니다.
     """
-    if not emoji_font:
-        # 이모지 폰트가 없으면 기본 폰트로 렌더링
-        if align == 'center':
-            bbox = draw.textbbox((0, 0), text, font=main_font)
-            x = position[0] - (bbox[2] - bbox[0]) // 2
-            draw.text((x, position[1]), text, fill=color, font=main_font)
-        else:
-            draw.text(position, text, fill=color, font=main_font)
+    if not emoji_font or not main_font:
+        # 폰트가 없으면 기본 처리
+        safe_font = main_font or emoji_font
+        if not safe_font:
+            try:
+                safe_font = ImageFont.load_default()
+            except:
+                print("❌ 폰트 로드 실패로 텍스트 렌더링을 건너뜁니다.")
+                return
+        
+        try:
+            if align == 'center':
+                bbox = draw.textbbox((0, 0), text, font=safe_font)
+                x = position[0] - (bbox[2] - bbox[0]) // 2
+                draw.text((x, position[1]), text, fill=color, font=safe_font)
+            else:
+                draw.text(position, text, fill=color, font=safe_font)
+        except Exception as e:
+            print(f"⚠️ 기본 텍스트 렌더링 실패: {e}")
         return
     
     # 이모지와 일반 텍스트를 분리
@@ -332,17 +502,24 @@ def draw_text_with_emoji(draw, text, position, main_font, emoji_font, align='lef
     
     # 이모지 위치 찾기
     emoji_positions = []
-    for match in emoji_pattern.finditer(text):
-        emoji_positions.append((match.start(), match.end(), match.group()))
+    try:
+        for match in emoji_pattern.finditer(text):
+            emoji_positions.append((match.start(), match.end(), match.group()))
+    except Exception as e:
+        print(f"⚠️ 이모지 패턴 검색 실패: {e}")
+        emoji_positions = []
     
     if not emoji_positions:
         # 이모지가 없으면 기본 렌더링
-        if align == 'center':
-            bbox = draw.textbbox((0, 0), text, font=main_font)
-            x = position[0] - (bbox[2] - bbox[0]) // 2
-            draw.text((x, position[1]), text, fill=color, font=main_font)
-        else:
-            draw.text(position, text, fill=color, font=main_font)
+        try:
+            if align == 'center':
+                bbox = draw.textbbox((0, 0), text, font=main_font)
+                x = position[0] - (bbox[2] - bbox[0]) // 2
+                draw.text((x, position[1]), text, fill=color, font=main_font)
+            else:
+                draw.text(position, text, fill=color, font=main_font)
+        except Exception as e:
+            print(f"⚠️ 일반 텍스트 렌더링 실패: {e}")
         return
     
     # 텍스트를 이모지와 일반 텍스트로 분할하여 렌더링
@@ -351,45 +528,90 @@ def draw_text_with_emoji(draw, text, position, main_font, emoji_font, align='lef
         # 전체 텍스트 너비 계산
         total_width = 0
         last_end = 0
+        try:
+            for start, end, emoji in emoji_positions:
+                # 이모지 앞의 일반 텍스트
+                if start > last_end:
+                    text_part = text[last_end:start]
+                    try:
+                        bbox = draw.textbbox((0, 0), text_part, font=main_font)
+                        total_width += bbox[2] - bbox[0]
+                    except Exception as e:
+                        print(f"⚠️ 텍스트 너비 계산 실패: {e}")
+                        # 대략적인 너비 추정
+                        total_width += len(text_part) * 10
+                # 이모지
+                try:
+                    bbox = draw.textbbox((0, 0), emoji, font=emoji_font)
+                    total_width += bbox[2] - bbox[0]
+                except Exception as e:
+                    print(f"⚠️ 이모지 너비 계산 실패: {e}")
+                    # 이모지 기본 너비 추정
+                    total_width += 20
+                last_end = end
+            
+            # 마지막 일반 텍스트
+            if last_end < len(text):
+                text_part = text[last_end:]
+                try:
+                    bbox = draw.textbbox((0, 0), text_part, font=main_font)
+                    total_width += bbox[2] - bbox[0]
+                except Exception as e:
+                    print(f"⚠️ 마지막 텍스트 너비 계산 실패: {e}")
+                    total_width += len(text_part) * 10
+            
+            current_x = position[0] - total_width // 2
+        except Exception as e:
+            print(f"⚠️ 중앙 정렬 너비 계산 실패: {e}")
+            current_x = position[0]  # 좌측 정렬로 폴백
+    
+    # 실제 렌더링
+    last_end = 0
+    try:
         for start, end, emoji in emoji_positions:
             # 이모지 앞의 일반 텍스트
             if start > last_end:
                 text_part = text[last_end:start]
-                bbox = draw.textbbox((0, 0), text_part, font=main_font)
-                total_width += bbox[2] - bbox[0]
+                try:
+                    draw.text((current_x, position[1]), text_part, fill=color, font=main_font)
+                    bbox = draw.textbbox((0, 0), text_part, font=main_font)
+                    current_x += bbox[2] - bbox[0]
+                except Exception as e:
+                    print(f"⚠️ 일반 텍스트 렌더링 실패: {e}")
+                    current_x += len(text_part) * 10  # 대략적인 이동
+            
             # 이모지
-            bbox = draw.textbbox((0, 0), emoji, font=emoji_font)
-            total_width += bbox[2] - bbox[0]
+            try:
+                draw.text((current_x, position[1]), emoji, fill=color, font=emoji_font)
+                bbox = draw.textbbox((0, 0), emoji, font=emoji_font)
+                current_x += bbox[2] - bbox[0]
+            except Exception as e:
+                print(f"⚠️ 이모지 '{emoji}' 렌더링 실패: {e}")
+                # 이모지 렌더링 실패 시 대체 텍스트로 처리
+                try:
+                    alt_text = f"[{emoji}]"
+                    draw.text((current_x, position[1]), alt_text, fill=color, font=main_font)
+                    bbox = draw.textbbox((0, 0), alt_text, font=main_font)
+                    current_x += bbox[2] - bbox[0]
+                except Exception as e2:
+                    print(f"⚠️ 이모지 대체 텍스트 렌더링도 실패: {e2}")
+                    current_x += 20  # 기본 이동
             last_end = end
         
         # 마지막 일반 텍스트
         if last_end < len(text):
             text_part = text[last_end:]
-            bbox = draw.textbbox((0, 0), text_part, font=main_font)
-            total_width += bbox[2] - bbox[0]
-        
-        current_x = position[0] - total_width // 2
-    
-    # 실제 렌더링
-    last_end = 0
-    for start, end, emoji in emoji_positions:
-        # 이모지 앞의 일반 텍스트
-        if start > last_end:
-            text_part = text[last_end:start]
-            draw.text((current_x, position[1]), text_part, fill=color, font=main_font)
-            bbox = draw.textbbox((0, 0), text_part, font=main_font)
-            current_x += bbox[2] - bbox[0]
-        
-        # 이모지
-        draw.text((current_x, position[1]), emoji, fill=color, font=emoji_font)
-        bbox = draw.textbbox((0, 0), emoji, font=emoji_font)
-        current_x += bbox[2] - bbox[0]
-        last_end = end
-    
-    # 마지막 일반 텍스트
-    if last_end < len(text):
-        text_part = text[last_end:]
-        draw.text((current_x, position[1]), text_part, fill=color, font=main_font)
+            try:
+                draw.text((current_x, position[1]), text_part, fill=color, font=main_font)
+            except Exception as e:
+                print(f"⚠️ 마지막 텍스트 렌더링 실패: {e}")
+    except Exception as e:
+        print(f"⚠️ 혼합 텍스트 렌더링 중 오류: {e}")
+        # 전체 실패 시 기본 폰트로 전체 텍스트 렌더링
+        try:
+            draw.text(position, text, fill=color, font=main_font)
+        except Exception as e2:
+            print(f"⚠️ 폴백 렌더링도 실패: {e2}")
 
 
 def extract_text_from_file(file_path: str) -> tuple[str, str]:
@@ -523,8 +745,18 @@ def google_text_to_speech(text, lang_code="KO"):
                 return tmp_file.name, msg
         else:
             return None, f"TTS API 오류: {response.text}"
+    except ConnectionError as e:
+        print(f"❌ TTS 네트워크 연결 오류: {e}")
+        return None, "❌ 네트워크 연결이 불안정하여 음성 생성에 실패했습니다."
+    except TimeoutError as e:
+        print(f"❌ TTS 응답 시간 초과: {e}")
+        return None, "❌ 음성 생성 시간이 초과되었습니다. 텍스트를 줄이거나 다시 시도해주세요."
+    except requests.exceptions.RequestException as e:
+        print(f"❌ TTS API 요청 오류: {e}")
+        return None, f"❌ 음성 생성 API 요청 실패: {e}"
     except Exception as e:
-        return None, f"TTS 스크립트 오류: {e}"
+        print(f"❌ TTS 중 예외 발생: {e}")
+        return None, f"❌ 음성 생성 중 오류: {e}"
 
 RETRIEVER = None
 def initialize_retriever():
@@ -929,12 +1161,28 @@ def md_to_html(md_text: str) -> str:
 
 def preprocess_markdown_for_translation(text: str) -> str:
     """
-    번역된 텍스트의 마크다운을 전처리하여 테이블 깨짐 현상을 방지합니다.
+    Solar Pro2 번역 전/후 마크다운 전처리하여 구조 보존을 강화합니다.
+    테이블, 헤딩, 리스트 등의 구조를 보호합니다.
     """
     if not text:
         return text
     
-    # 테이블 구조 보존을 위한 전처리
+    # 1. 테이블 구조 보존을 위한 전처리
+    text = preprocess_tables_for_solar(text)
+    
+    # 2. 헤딩 구조 보존
+    text = preprocess_headers_for_solar(text)
+    
+    # 3. 리스트 구조 보존
+    text = preprocess_lists_for_solar(text)
+    
+    # 4. 코드 블록 보존
+    text = preprocess_code_blocks_for_solar(text)
+    
+    return text
+
+def preprocess_tables_for_solar(text: str) -> str:
+    """테이블 구조를 Solar Pro2가 잘 인식할 수 있도록 전처리 - 강화된 버전"""
     lines = text.split('\n')
     processed_lines = []
     in_table = False
@@ -943,20 +1191,24 @@ def preprocess_markdown_for_translation(text: str) -> str:
     for line in lines:
         stripped = line.strip()
         
-        # 테이블 시작 감지 (파이프 | 포함)
-        if '|' in stripped and not stripped.startswith('http'):
+        # 테이블 시작 감지 (파이프 | 포함, URL 제외)
+        if '|' in stripped and not stripped.startswith('http') and not stripped.startswith('https'):
             if not in_table:
                 in_table = True
                 table_buffer = []
+                # 테이블 시작 마커와 명확한 지침 추가
+                processed_lines.append("<!-- TABLE_START: 다음 테이블은 | 구분자를 정확히 유지해야 합니다 -->")
             table_buffer.append(line)
-        # 테이블 구분선 감지 (--- 또는 ===)
-        elif in_table and (stripped.startswith('|') and ('---' in stripped or '===' in stripped)):
+        # 테이블 구분선 감지 (더 포괄적인 패턴)
+        elif in_table and ('---' in stripped or '===' in stripped or ':-:' in stripped or re.match(r'^[\|\-\s\:]+$', stripped)):
             table_buffer.append(line)
-        # 테이블 종료 감지 (빈 줄 또는 파이프가 없는 줄)
-        elif in_table and (not stripped or '|' not in stripped):
+        # 테이블 종료 감지
+        elif in_table and (not stripped or ('|' not in stripped and stripped)):
             # 테이블 버퍼 처리
             if table_buffer:
-                processed_lines.extend(process_table_markdown(table_buffer))
+                processed_table = process_table_markdown_for_solar(table_buffer)
+                processed_lines.extend(processed_table)
+                processed_lines.append("<!-- TABLE_END: 위 테이블 형식을 번역 후에도 정확히 유지하세요 -->")
                 table_buffer = []
             in_table = False
             processed_lines.append(line)
@@ -969,9 +1221,118 @@ def preprocess_markdown_for_translation(text: str) -> str:
     
     # 마지막 테이블 처리
     if table_buffer:
-        processed_lines.extend(process_table_markdown(table_buffer))
+        processed_table = process_table_markdown_for_solar(table_buffer)
+        processed_lines.extend(processed_table)
+        processed_lines.append("<!-- TABLE_END: 위 테이블 형식을 번역 후에도 정확히 유지하세요 -->")
     
     return '\n'.join(processed_lines)
+
+def process_table_markdown_for_solar(table_lines: list) -> list:
+    """Solar Pro2 번역을 위한 테이블 마크다운 정제 - 강화된 버전"""
+    if not table_lines:
+        return []
+    
+    processed_lines = []
+    
+    for i, line in enumerate(table_lines):
+        stripped = line.strip()
+        
+        if '|' in stripped:
+            # 테이블 구분선 처리
+            if re.match(r'^[\|\-\s\:]+$', stripped):
+                # 구분선 정규화 (---|---|--- 형태로)
+                cells = stripped.split('|')
+                separator_cells = []
+                for cell in cells:
+                    cell = cell.strip()
+                    if cell == '' or re.match(r'^[\-\:]+$', cell):
+                        separator_cells.append('---')
+                    else:
+                        separator_cells.append('---')
+                
+                # 양쪽 끝 빈 셀 제거 후 구분선 생성
+                if separator_cells and separator_cells[0] == '---':
+                    separator_cells = separator_cells[1:]
+                if separator_cells and separator_cells[-1] == '---':
+                    separator_cells = separator_cells[:-1]
+                
+                processed_line = '| ' + ' | '.join(['---'] * len(separator_cells)) + ' |'
+                processed_lines.append(processed_line)
+                continue
+            
+            # 일반 테이블 셀 처리
+            cells = stripped.split('|')
+            cleaned_cells = []
+            
+            for cell in cells:
+                cleaned_cell = cell.strip()
+                # 베트남어, 우크라이나어 특수 문자 보존
+                if cleaned_cell:
+                    cleaned_cell = preserve_special_chars_for_translation(cleaned_cell)
+                cleaned_cells.append(cleaned_cell)
+            
+            # 테이블 구조 표준화
+            if not stripped.startswith('|'):
+                # 시작 파이프 없음
+                processed_line = '| ' + ' | '.join(cleaned_cells) + ' |'
+            elif not stripped.endswith('|'):
+                # 끝 파이프 없음  
+                processed_line = '| ' + ' | '.join(cleaned_cells) + ' |'
+            else:
+                # 양쪽 파이프 있음 - 첫/마지막 빈 셀 제거
+                if cleaned_cells and cleaned_cells[0] == '':
+                    cleaned_cells = cleaned_cells[1:]
+                if cleaned_cells and cleaned_cells[-1] == '':
+                    cleaned_cells = cleaned_cells[:-1]
+                processed_line = '| ' + ' | '.join(cleaned_cells) + ' |'
+            
+            processed_lines.append(processed_line)
+        else:
+            processed_lines.append(line)
+    
+    return processed_lines
+
+def preprocess_headers_for_solar(text: str) -> str:
+    """헤딩 구조를 Solar Pro2가 잘 인식할 수 있도록 전처리"""
+    # 헤딩 앞뒤에 명확한 구분 추가
+    text = re.sub(r'^(#{1,6})\s*(.+)$', r'\1 \2', text, flags=re.MULTILINE)
+    return text
+
+def preprocess_lists_for_solar(text: str) -> str:
+    """리스트 구조를 Solar Pro2가 잘 인식할 수 있도록 전처리"""
+    # 순서 있는 리스트 정규화
+    text = re.sub(r'^(\s*)(\d+)\.\s*(.+)$', r'\1\2. \3', text, flags=re.MULTILINE)
+    
+    # 순서 없는 리스트 정규화
+    text = re.sub(r'^(\s*)[-*+]\s*(.+)$', r'\1- \2', text, flags=re.MULTILINE)
+    
+    return text
+
+def preprocess_code_blocks_for_solar(text: str) -> str:
+    """코드 블록 구조를 Solar Pro2가 잘 인식할 수 있도록 전처리"""
+    # 코드 블록 마커 명확화
+    text = re.sub(r'^```(\w*)\s*$', r'```\1', text, flags=re.MULTILINE)
+    
+    return text
+
+def preserve_special_chars_for_translation(text: str) -> str:
+    """번역 시 특수 문자들을 보존"""
+    # 베트남어 특수 문자 보존 (기존 함수 재사용)
+    text = preserve_vietnamese_chars(text)
+    
+    # 우크라이나어 키릴 문자 보존
+    ukrainian_chars = {
+        'а': 'а', 'б': 'б', 'в': 'в', 'г': 'г', 'ґ': 'ґ', 'д': 'д', 'е': 'е', 'є': 'є', 
+        'ж': 'ж', 'з': 'з', 'и': 'и', 'і': 'і', 'ї': 'ї', 'й': 'й', 'к': 'к', 'л': 'л', 
+        'м': 'м', 'н': 'н', 'о': 'о', 'п': 'п', 'р': 'р', 'с': 'с', 'т': 'т', 'у': 'у', 
+        'ф': 'ф', 'х': 'х', 'ц': 'ц', 'ч': 'ч', 'ш': 'ш', 'щ': 'щ', 'ь': 'ь', 'ю': 'ю', 'я': 'я'
+    }
+    
+    for original, preserved in ukrainian_chars.items():
+        text = text.replace(original, preserved)
+        text = text.replace(original.upper(), preserved.upper())
+    
+    return text
 
 def process_table_markdown(table_lines: list) -> list:
     """
@@ -1154,7 +1515,7 @@ def create_translated_html(translated_text: str, title: str = "번역된 내용"
         processed_text = processed_text.replace("ỵ", "ỵ").replace("ỷ", "ỷ").replace("ỹ", "ỹ")
         processed_text = processed_text.replace("đ", "đ")
     
-    # 마크다운 변환 전 텍스트 전처리 (테이블 깨짐 방지)
+    # Solar Pro2 번역 최적화를 위한 마크다운 전처리 (구조 보존 강화)
     processed_text = preprocess_markdown_for_translation(processed_text)
     
     html_content = md_to_html(processed_text)
@@ -1750,18 +2111,373 @@ def perform_ai_analysis(contract_text: str) -> dict:
         print(f"❌ Groundedness Check 또는 AI 분석 중 오류: {e}")
         return {"analysis": f"❌ AI 분석 중 오류 발생: {e}"}
 
-def deepl_translate_text(text, target_lang):
-    if not DEEPL_API_KEY:
+def solar_translate_text(text, target_lang):
+    """
+    Solar Pro2 모델을 사용하여 마크다운 구조를 보존하면서 번역합니다.
+    DeepL API의 문제점들(마크다운 깨짐, 테이블 구조 파괴, 전문용어 부정확성)을 해결합니다.
+    """
+    if not UPSTAGE_API_KEY:
         lang_names = {"EN": "영어", "JA": "일본어", "ZH": "중국어", "UK": "우크라이나어", "VI": "베트남어"}
-        return f"[{lang_names.get(target_lang, target_lang)} 번역 기능]\n\nDeepL API 키가 설정되지 않아 실제 번역은 불가능합니다.\n\n원본 텍스트:\n{text}..."
+        return f"[{lang_names.get(target_lang, target_lang)} 번역 기능]\n\nUpstage API 키가 설정되지 않아 실제 번역은 불가능합니다.\n\n원본 텍스트:\n{text}..."
+    
+    # 언어별 상세 설정
+    lang_config = {
+        "EN": {
+            "name": "영어",
+            "instructions": "Translate to natural, professional English suitable for real estate legal documents. Maintain all markdown formatting including headers (#), tables (|), lists (-), bold (**), and code blocks (```).",
+            "style": "formal and professional tone"
+        },
+        "JA": {
+            "name": "일본어", 
+            "instructions": "自然で専門的な日本語に翻訳してください。不動産法務文書に適した敬語を使用し、すべてのマークダウン形式（ヘッダー #、テーブル |、リスト -、太字 **、コードブロック ```）を維持してください。",
+            "style": "formal and respectful Japanese (keigo)"
+        },
+        "ZH": {
+            "name": "중국어",
+            "instructions": "翻译成自然、专业的简体中文，适用于房地产法律文件。保持所有markdown格式，包括标题(#)、表格(|)、列表(-)、粗体(**)和代码块(```)。",
+            "style": "formal and professional Chinese"
+        },
+        "UK": {
+            "name": "우크라이나어",
+            "instructions": "Перекладіть природною, професійною українською мовою, підходящою для документів з нерухомості. Збережіть усе форматування markdown, включаючи заголовки (#), таблиці (|), списки (-), жирний шрифт (**) та блоки коду (```).",
+            "style": "formal and professional Ukrainian"
+        },
+        "VI": {
+            "name": "베트남어",
+            "instructions": "Dịch sang tiếng Việt tự nhiên, chuyên nghiệp phù hợp với tài liệu pháp lý bất động sản. Giữ nguyên tất cả định dạng markdown bao gồm tiêu đề (#), bảng (|), danh sách (-), in đậm (**) và khối mã (```).",
+            "style": "formal and professional Vietnamese"
+        }
+    }
+    
+    if target_lang not in lang_config:
+        return f"지원하지 않는 언어 코드: {target_lang}\n\n원본 텍스트:\n{text}..."
+    
+    config = lang_config[target_lang]
+    
     try:
-        headers = {"Authorization": f"DeepL-Auth-Key {DEEPL_API_KEY}"}
-        data = {"text": [text], "target_lang": target_lang}
-        response = requests.post(DEEPL_API_URL, headers=headers, json=data, timeout=30)
-        response.raise_for_status()
-        return response.json()["translations"][0]["text"]
+        # 긴 텍스트인 경우 청크 단위로 분할하여 번역
+        if len(text) > 8000:  # 약 2000 토큰
+            return translate_long_text_with_solar(text, target_lang, config)
+        
+        # 마크다운 전처리 (번역 전 테이블 구조 보호)
+        preprocessed_text = preprocess_markdown_for_translation(text)
+        
+        # 일반 번역 수행
+        prompt = ChatPromptTemplate.from_template("""
+당신은 한국 부동산 법률 전문 번역가입니다. 다음 텍스트를 {target_language}로 번역해주세요.
+
+**CRITICAL 테이블 번역 규칙:**
+- 테이블의 각 행은 반드시 | 로 시작하고 | 로 끝나야 합니다
+- 컬럼 사이는 | 하나로만 구분합니다 (예: | 컬럼1 | 컬럼2 | 컬럼3 |)
+- 테이블 헤더 다음 줄은 반드시 구분선(예: | --- | --- | --- |)이어야 합니다
+- 셀 내용 번역 시 파이프(|) 문자를 절대 추가하지 마세요
+
+**마크다운 형식 보존 지침:**
+1. 헤딩 구조 (#, ##, ###) 정확히 유지
+2. 테이블 구조 (| 컬럼 |) 완벽 보존 - 가장 중요!
+3. 리스트 구조 (-, 1.) 들여쓰기 포함 유지  
+4. 볼드/이탤릭 (**text**, *text*) 정확히 유지
+5. 코드 블록 (```) 구조 유지
+6. 부동산 법률 전문용어는 정확하고 자연스럽게 번역
+7. {style_guide}로 번역
+
+**번역할 텍스트:**
+{text}
+
+**예시 테이블 형식:**
+| 헤더1 | 헤더2 | 헤더3 |
+| --- | --- | --- |
+| 내용1 | 내용2 | 내용3 |
+
+**번역 결과 (위 형식 엄격히 준수):**
+""")
+        
+        chain = prompt | ChatUpstage(model="solar-pro2", reasoning_effort="high") | StrOutputParser()
+        
+        result = chain.invoke({
+            "text": preprocessed_text,
+            "target_language": config["name"],
+            "instructions": config["instructions"], 
+            "style_guide": config["style"]
+        })
+        
+        # 번역 결과 후처리 - 마크다운 구조 복원
+        result = fix_markdown_structure(result, text)
+        
+        # HTML 주석 제거 (번역 지침 주석 정리)
+        result = re.sub(r'<!--.*?-->', '', result, flags=re.DOTALL)
+        result = re.sub(r'\n\s*\n\s*\n', '\n\n', result)  # 과도한 빈 줄 정리
+        
+        # 테이블 구조 검증 (디버깅용)
+        table_issues = validate_table_structure(result)
+        if table_issues:
+            print(f"⚠️ 번역 후 테이블 구조 문제 발견:")
+            for issue in table_issues[:3]:  # 최대 3개만 출력
+                print(f"   - {issue}")
+        else:
+            print("✅ 테이블 구조 검증 통과")
+        
+        return result.strip()
+        
     except Exception as e:
-        return f"번역 오류: {e}\n\n원본 텍스트:\n{text}..."
+        print(f"❌ Solar 번역 중 오류: {e}")
+        return f"번역 오류: {e}\n\n원본 텍스트:\n{text[:500]}..."
+
+def translate_long_text_with_solar(text, target_lang, config):
+    """긴 텍스트를 청크 단위로 분할하여 Solar Pro2로 번역"""
+    try:
+        # 마크다운 구조를 고려한 청크 분할
+        chunks = split_text_for_translation(text)
+        translated_chunks = []
+        
+        for i, chunk in enumerate(chunks, 1):
+            print(f"🔄 번역 중... ({i}/{len(chunks)})")
+            
+            prompt = ChatPromptTemplate.from_template("""
+당신은 한국 부동산 법률 전문 번역가입니다. 다음 텍스트 청크를 {target_language}로 번역해주세요.
+
+**번역 지침:**
+- 마크다운 형식 완벽 보존 (헤딩 #, 테이블 |, 리스트 -, 볼드 **)
+- 부동산 법률 전문용어 정확성
+- {style_guide}
+- 청크 간 연결성 고려
+
+**텍스트 청크 {chunk_num}/{total_chunks}:**
+{chunk_text}
+
+**번역 결과:**
+""")
+            
+            chain = prompt | ChatUpstage(model="solar-pro2") | StrOutputParser()
+            
+            chunk_result = chain.invoke({
+                "chunk_text": chunk,
+                "target_language": config["name"],
+                "style_guide": config["style"],
+                "chunk_num": i,
+                "total_chunks": len(chunks)
+            })
+            
+            translated_chunks.append(chunk_result.strip())
+        
+        # 청크들을 결합
+        final_result = "\n\n".join(translated_chunks)
+        
+        # 전체 구조 후처리
+        final_result = fix_markdown_structure(final_result, text)
+        
+        # HTML 주석 제거 (번역 지침 주석 정리)
+        final_result = re.sub(r'<!--.*?-->', '', final_result, flags=re.DOTALL)
+        final_result = re.sub(r'\n\s*\n\s*\n', '\n\n', final_result)  # 과도한 빈 줄 정리
+        
+        # 테이블 구조 검증 (긴 텍스트용)
+        table_issues = validate_table_structure(final_result)
+        if table_issues:
+            print(f"⚠️ 긴 텍스트 번역 후 테이블 구조 문제 발견:")
+            for issue in table_issues[:5]:  # 긴 텍스트는 최대 5개 출력
+                print(f"   - {issue}")
+        else:
+            print("✅ 긴 텍스트 테이블 구조 검증 통과")
+        
+        return final_result
+        
+    except Exception as e:
+        print(f"❌ 긴 텍스트 번역 중 오류: {e}")
+        return f"번역 오류: {e}\n\n원본 텍스트:\n{text[:500]}..."
+
+def split_text_for_translation(text, max_chars=6000):
+    """마크다운 구조를 고려하여 텍스트를 번역용으로 분할"""
+    if len(text) <= max_chars:
+        return [text]
+    
+    chunks = []
+    current_chunk = ""
+    
+    # 마크다운 블록 단위로 분할 (헤딩, 리스트, 테이블 등)
+    blocks = re.split(r'\n(?=#{1,6}\s|\|\s|\d+\.\s|\-\s|\*\s)', text)
+    
+    for block in blocks:
+        if len(current_chunk + block) <= max_chars:
+            current_chunk += block + "\n"
+        else:
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+            current_chunk = block + "\n"
+    
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+    
+    return chunks
+
+def fix_markdown_structure(translated_text, original_text):
+    """번역 후 깨진 마크다운 구조를 복원"""
+    
+    # 1. 테이블 구조 복원
+    translated_text = fix_table_structure(translated_text)
+    
+    # 2. 헤딩 구조 복원  
+    translated_text = fix_heading_structure(translated_text)
+    
+    # 3. 리스트 구조 복원
+    translated_text = fix_list_structure(translated_text)
+    
+    # 4. 볼드/이탤릭 복원
+    translated_text = fix_emphasis_structure(translated_text)
+    
+    return translated_text
+
+def fix_table_structure(text):
+    """테이블 구조 복원 - 강화된 버전"""
+    lines = text.split('\n')
+    fixed_lines = []
+    in_table = False
+    
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        
+        # 테이블 라인 감지 (파이프 포함하고 URL이 아닌 경우)
+        if '|' in stripped and not stripped.startswith('http'):
+            in_table = True
+            
+            # 테이블 구분선 처리 (---|---|--- 형태)
+            if re.match(r'^[\|\-\s]+$', stripped.replace(':', '')):
+                # 구분선 정규화
+                separator_parts = stripped.split('|')
+                clean_parts = []
+                for part in separator_parts:
+                    part = part.strip()
+                    if part == '' or re.match(r'^[\-\:]+$', part):
+                        if part and not re.match(r'^[\-\:]+$', part):
+                            clean_parts.append('---')
+                        elif part:
+                            clean_parts.append(part)
+                        else:
+                            clean_parts.append('')
+                    else:
+                        clean_parts.append('---')
+                
+                if clean_parts and (clean_parts[0] == '' or clean_parts[0] == '---'):
+                    if clean_parts[-1] == '' or clean_parts[-1] == '---':
+                        # 양쪽 끝이 비어있는 경우 (올바른 테이블 형태)
+                        fixed_line = '|' + '|'.join(clean_parts[1:-1]) + '|'
+                    else:
+                        # 끝에 파이프가 없는 경우
+                        fixed_line = '|' + '|'.join(clean_parts) + '|'
+                else:
+                    # 시작에 파이프가 없는 경우
+                    fixed_line = '|' + '|'.join(clean_parts) + '|'
+                    
+                fixed_lines.append(fixed_line)
+                continue
+            
+            # 일반 테이블 셀 처리
+            if '|' in stripped:
+                # 파이프로 분할하여 셀 정리
+                cells = stripped.split('|')
+                clean_cells = []
+                
+                for cell in cells:
+                    clean_cell = cell.strip()
+                    # 빈 셀도 유지 (테이블 구조를 위해)
+                    clean_cells.append(clean_cell)
+                
+                # 테이블 행 형태로 재구성
+                if not stripped.startswith('|'):
+                    # 시작 파이프 없음 - 첫 번째 요소를 셀로 취급
+                    fixed_line = '| ' + ' | '.join(clean_cells) + ' |'
+                elif not stripped.endswith('|'):
+                    # 끝 파이프 없음 - 마지막 요소까지 셀로 취급
+                    fixed_line = '| ' + ' | '.join(clean_cells) + ' |'
+                else:
+                    # 양쪽 파이프 있음 - 첫/마지막 빈 요소 제거
+                    if clean_cells and not clean_cells[0]:
+                        clean_cells = clean_cells[1:]
+                    if clean_cells and not clean_cells[-1]:
+                        clean_cells = clean_cells[:-1]
+                    fixed_line = '| ' + ' | '.join(clean_cells) + ' |'
+                
+                fixed_lines.append(fixed_line)
+                continue
+        else:
+            # 테이블이 아닌 라인
+            if in_table and stripped == '':
+                # 테이블 다음 빈 줄 - 테이블 종료
+                in_table = False
+            
+        # 일반 라인 추가
+        fixed_lines.append(line)
+    
+    return '\n'.join(fixed_lines)
+
+def fix_heading_structure(text):
+    """헤딩 구조 복원"""
+    # 헤딩 앞에 # 개수 복원
+    text = re.sub(r'^(\s*)(#{1,6})\s*(.+)$', r'\1\2 \3', text, flags=re.MULTILINE)
+    return text
+
+def fix_list_structure(text):
+    """리스트 구조 복원"""
+    # 리스트 항목 앞의 - 또는 * 복원
+    text = re.sub(r'^(\s*)[-*]\s*(.+)$', r'\1- \2', text, flags=re.MULTILINE)
+    
+    # 번호 리스트 복원
+    text = re.sub(r'^(\s*)(\d+)\.\s*(.+)$', r'\1\2. \3', text, flags=re.MULTILINE)
+    
+    return text
+
+def fix_emphasis_structure(text):
+    """강조 구조 복원"""
+    # 볼드 복원
+    text = re.sub(r'\*\*([^*]+)\*\*', r'**\1**', text)
+    
+    # 이탤릭 복원  
+    text = re.sub(r'\*([^*]+)\*', r'*\1*', text)
+    
+    return text
+
+def validate_table_structure(text):
+    """번역 후 테이블 구조 검증"""
+    lines = text.split('\n')
+    issues = []
+    in_table = False
+    table_line_count = 0
+    
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        
+        if '|' in stripped and not stripped.startswith('http'):
+            if not in_table:
+                in_table = True
+                table_line_count = 0
+            
+            table_line_count += 1
+            
+            # 테이블 라인 검증
+            if not (stripped.startswith('|') and stripped.endswith('|')):
+                issues.append(f"라인 {i}: 테이블 행이 파이프(|)로 시작하고 끝나지 않음")
+            
+            # 연속된 파이프 검증
+            if '||' in stripped:
+                issues.append(f"라인 {i}: 연속된 파이프(||) 발견 - 빈 셀 처리 필요")
+            
+            # 구분선 검증
+            if re.match(r'^[\|\-\s\:]+$', stripped):
+                cell_count = len([x for x in stripped.split('|') if x.strip() != ''])
+                if cell_count == 0:
+                    issues.append(f"라인 {i}: 테이블 구분선에 셀이 없음")
+        else:
+            if in_table and stripped == '':
+                in_table = False
+                if table_line_count < 2:
+                    issues.append(f"라인 {i-table_line_count}~{i-1}: 테이블이 너무 짧음 (헤더+구분선+내용 필요)")
+                table_line_count = 0
+    
+    return issues
+
+# 기존 deepl_translate_text 함수는 호환성을 위해 solar_translate_text로 리다이렉트
+def deepl_translate_text(text, target_lang):
+    """기존 코드 호환성을 위한 래퍼 함수"""
+    return solar_translate_text(text, target_lang)
 
 def split_text_for_tts(text, max_bytes=4500):
     if len(text.encode('utf-8')) <= max_bytes:
@@ -1904,33 +2620,45 @@ def detect_language_code(text: str, translate_lang: str) -> str:
 
 def html_to_png_downloadable(html_content: str, filename_prefix="report_html", lang_code_override: str | None = None):
     """HTML을 PNG로 저장 - 순수 텍스트만 추출하여 깔끔하게 저장 (이모지 지원)"""
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # HTML에서 순수 텍스트만 추출
-    clean_text = extract_clean_text_from_html(html_content)
-    
-    # 언어 감지 (또는 호출부에서 override)
-    if lang_code_override:
-        lang_code = lang_code_override
-    else:
-        lang_code = 'KO'
-        # 번역 결과에 포함된 언어명을 기반으로 언어 코드 설정
-        if any(keyword in clean_text for keyword in ['Translation Result', 'English', '영어']):
-            lang_code = 'EN'
-        elif any(keyword in clean_text for keyword in ['翻訳結果', '日本語', '일본어']):
-            lang_code = 'JA'
-        elif any(keyword in clean_text for keyword in ['翻译结果', '中文', '중국어']):
-            lang_code = 'ZH'
-        elif any(keyword in clean_text for keyword in ['Результат перекладу', '우크라이나어']) or any(char in clean_text for char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"):
-            lang_code = 'UK'
-        elif any(keyword in clean_text for keyword in ['Kết quả dịch', '베트남어']):
-            lang_code = 'VI'
-    
-    # PIL로 깔끔한 이미지 생성 (이모지 포함)
-    img = create_clean_report_image(clean_text, filename_prefix, lang_code)
-    out_path = Path(tempfile.gettempdir()) / f"{filename_prefix}_{ts}.png"
-    img.save(out_path, format='PNG', quality=95, optimize=True)
-    return str(out_path)
+    try:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # HTML에서 순수 텍스트만 추출
+        clean_text = extract_clean_text_from_html(html_content)
+        
+        # 언어 감지 (또는 호출부에서 override)
+        if lang_code_override:
+            lang_code = lang_code_override
+        else:
+            lang_code = 'KO'
+            # 번역 결과에 포함된 언어명을 기반으로 언어 코드 설정
+            if any(keyword in clean_text for keyword in ['Translation Result', 'English', '영어']):
+                lang_code = 'EN'
+            elif any(keyword in clean_text for keyword in ['翻訳結果', '日本語', '일본어']):
+                lang_code = 'JA'
+            elif any(keyword in clean_text for keyword in ['翻译结果', '中文', '중국어']):
+                lang_code = 'ZH'
+            elif any(keyword in clean_text for keyword in ['Результат перекладу', '우크라이나어']) or any(char in clean_text for char in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"):
+                lang_code = 'UK'
+            elif any(keyword in clean_text for keyword in ['Kết quả dịch', '베트남어']):
+                lang_code = 'VI'
+        
+        # PIL로 깔끔한 이미지 생성 (이모지 포함)
+        img = create_clean_report_image(clean_text, filename_prefix, lang_code)
+        out_path = Path(tempfile.gettempdir()) / f"{filename_prefix}_{ts}.png"
+        img.save(out_path, format='PNG', quality=95, optimize=True)
+        return str(out_path)
+    except Exception as e:
+        print(f"❌ PNG 생성 중 오류: {e}")
+        # 실패 시 기본 텍스트 파일로 대체
+        try:
+            out_path = Path(tempfile.gettempdir()) / f"{filename_prefix}_{ts}_fallback.txt"
+            with open(out_path, 'w', encoding='utf-8') as f:
+                f.write(f"PNG 생성 실패 - 텍스트 버전\n\n{clean_text}")
+            return str(out_path)
+        except Exception as e2:
+            print(f"❌ 폴백 텍스트 파일 생성도 실패: {e2}")
+            return None
 
 def create_report_image(report_text, title="AI 계약서 분석 리포트", lang="ko"):
     """기존 PIL 이미지 생성 함수 - 사용하지 않음 (하위 호환용으로만 유지)"""
@@ -1983,7 +2711,14 @@ def analyze_contract(file, progress=gr.Progress(track_tqdm=True)):
         html_report = render_report_html(os.path.basename(file.name), rule_analysis, ai_analysis)
 
         return html_report, text, md_report, html_report
+    except ConnectionError as e:
+        print(f"❌ 네트워크 연결 오류: {e}")
+        return "❌ 네트워크 연결이 불안정합니다. 잠시 후 다시 시도해주세요.", "", "", ""
+    except TimeoutError as e:
+        print(f"❌ 처리 시간 초과: {e}")
+        return "❌ 처리 시간이 초과되었습니다. 파일 크기를 줄이거나 다시 시도해주세요.", "", "", ""
     except Exception as e:
+        print(f"❌ 분석 중 예외 발생: {e}")
         return f"❌ 분석 중 오류 발생: {str(e)}", "", "", ""
 
 def chat_with_ai(message, history):
@@ -2052,7 +2787,18 @@ def chat_with_ai(message, history):
 
         history.append((message, response))
         return history, response
+    except ConnectionError as e:
+        print(f"❌ 채팅 네트워크 연결 오류: {e}")
+        err_msg = "❌ 네트워크 연결이 불안정합니다. 잠시 후 다시 질문해주세요."
+        history.append((message, err_msg))
+        return history, err_msg
+    except TimeoutError as e:
+        print(f"❌ 채팅 응답 시간 초과: {e}")
+        err_msg = "❌ 응답 시간이 초과되었습니다. 질문을 간단히 하거나 다시 시도해주세요."
+        history.append((message, err_msg))
+        return history, err_msg
     except Exception as e:
+        print(f"❌ 채팅 중 예외 발생: {e}")
         err_msg = f"❌ 답변 생성 중 오류: {e}"
         history.append((message, err_msg))
         return history, err_msg
@@ -2478,9 +3224,44 @@ def main():
         # 4. Gradio 인터페이스 생성 및 실행
         app = create_interface()
         print("✅ 인터페이스 생성 완료. 웹서버를 시작합니다.")
-        app.launch(server_name="0.0.0.0", server_port=7860, share=True, favicon_path="./Image/logo.png")
+        
+        # 서버 시작 시 클라이언트 연결 끊김 에러 방지를 위한 설정 강화
+        app.launch(
+            server_name="0.0.0.0", 
+            server_port=7860, 
+            share=True, 
+            favicon_path="./Image/logo.png",
+            # 클라이언트 연결 안정성 강화 설정
+            max_threads=40,  # 동시 처리 스레드 증가
+            debug=False,     # 디버그 모드 비활성화로 성능 향상
+            quiet=False      # 로그 출력 유지하여 문제 추적
+        )
+    except KeyboardInterrupt:
+        print("🛑 사용자가 서버를 종료했습니다.")
+    except OSError as e:
+        if "Address already in use" in str(e):
+            print("❌ 포트 7860이 이미 사용 중입니다. 다른 포트로 재시도합니다.")
+            try:
+                app.launch(
+                    server_name="0.0.0.0", 
+                    server_port=7861, 
+                    share=True, 
+                    favicon_path="./Image/logo.png",
+                    max_threads=40,
+                    debug=False,
+                    quiet=False
+                )
+            except Exception as e2:
+                print(f"❌ 대체 포트(7861)로도 시작 실패: {e2}")
+        else:
+            print(f"❌ 서버 시작 중 OS 오류: {e}")
     except Exception as e:
-        print(f"❌ 서버 시작 중 오류 발생: {e}")
+        print(f"❌ 서버 시작 중 예상치 못한 오류 발생: {e}")
+        print("💡 해결 방법:")
+        print("   1. 터미널을 완전히 종료 후 재시작")
+        print("   2. 다른 포트 사용 (코드에서 server_port 변경)")
+        print("   3. 방화벽 설정 확인")
+        print("   4. 인터넷 연결 상태 확인 (share=True 사용 시)")
 
 if __name__ == "__main__":
     main()
