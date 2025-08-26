@@ -1165,7 +1165,7 @@ def perform_ai_analysis(contract_text: str) -> dict:
                 "contract": RunnablePassthrough()
             }
             | prompt
-            | ChatUpstage(model="solar-pro")
+            | ChatUpstage(model="solar-pro2", reasoning_effort="high")
             | StrOutputParser()
         )
 
@@ -1472,7 +1472,7 @@ def chat_with_ai(message, history):
                 "question": RunnablePassthrough()
             }
             | prompt
-            | ChatUpstage(model="solar-pro")
+            | ChatUpstage(model="solar-pro2", reasoning_effort="high")
             | StrOutputParser()
         )
 
