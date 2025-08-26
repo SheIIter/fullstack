@@ -1633,13 +1633,23 @@ def perform_ai_analysis(contract_text: str) -> dict:
                     )
                     simple_chain = simple_prompt | ChatUpstage(model="solar-pro2", reasoning_effort="high") | StrOutputParser()
                     chunk_result = simple_chain.invoke({"contract": chunk})
-                    all_analyses.append(f"## 청크 {i} 분석 결과\n\n{chunk_result}")
+                    # 청크가 1개일 때는 제목을 표시하지 않음
+                    if len(text_chunks) == 1:
+                        all_analyses.append(chunk_result)
+                    else:
+                        all_analyses.append(f"## 청크 {i} 분석 결과\n\n{chunk_result}")
                 except Exception as chunk_error:
                     print(f"⚠️ 청크 {i} 분석 실패: {chunk_error}")
-                    all_analyses.append(f"## 청크 {i} 분석 실패\n\n오류: {chunk_error}")
+                    if len(text_chunks) == 1:
+                        all_analyses.append(f"분석 실패\n\n오류: {chunk_error}")
+                    else:
+                        all_analyses.append(f"## 청크 {i} 분석 실패\n\n오류: {chunk_error}")
             
             # 모든 분석 결과 통합
-            analysis_result = "\n\n---\n\n".join(all_analyses)
+            if len(text_chunks) == 1:
+                analysis_result = all_analyses[0]
+            else:
+                analysis_result = "\n\n---\n\n".join(all_analyses)
             print("✅ 모든 청크 분석 완료 및 통합")
             
             # Groundedness Check는 전체 텍스트에 대해 수행
