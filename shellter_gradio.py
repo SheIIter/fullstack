@@ -1616,8 +1616,12 @@ def perform_ai_analysis(contract_text: str) -> dict:
             all_analyses = []
             for i, chunk in enumerate(text_chunks, 1):
                 print(f"🔍 청크 {i}/{len(text_chunks)} 분석 중...")
+                print(f"   📏 청크 {i} 길이: {len(chunk)} 문자 (약 {len(chunk)//4} 토큰)")
+                print(f"   📝 청크 {i} 시작 부분: {chunk[:100]}...")
+                
                 try:
                     # RAG 체인 대신 단순 분석 사용
+                    print(f"   🤖 청크 {i} 단순 분석 시작...")
                     simple_prompt = ChatPromptTemplate.from_template(
                         """한국 부동산 법률 전문가로서 다음 [계약서]를 분석해주세요.
 
@@ -1631,32 +1635,64 @@ def perform_ai_analysis(contract_text: str) -> dict:
 4. **종합적인 법률 자문**: 계약 전반에 대한 종합적인 의견과 추가적으로 확인해야 할 사항을 알려주세요.
 """
                     )
+                    print(f"   📋 청크 {i} 프롬프트 생성 완료")
+                    
                     simple_chain = simple_prompt | ChatUpstage(model="solar-pro2", reasoning_effort="high") | StrOutputParser()
+                    print(f"   🔗 청크 {i} 체인 생성 완료, 분석 실행 중...")
+                    
                     chunk_result = simple_chain.invoke({"contract": chunk})
+                    print(f"   ✅ 청크 {i} 분석 성공! 결과 길이: {len(chunk_result)} 문자")
+                    
                     # 청크가 1개일 때는 제목을 표시하지 않음
                     if len(text_chunks) == 1:
                         all_analyses.append(chunk_result)
+                        print(f"   📌 청크 {i} 결과 저장 (제목 없음)")
                     else:
                         all_analyses.append(f"## 청크 {i} 분석 결과\n\n{chunk_result}")
+                        print(f"   📌 청크 {i} 결과 저장 (제목 포함)")
+                        
                 except Exception as chunk_error:
                     print(f"⚠️ 청크 {i} 분석 실패: {chunk_error}")
+                    print(f"   🔍 오류 타입: {type(chunk_error).__name__}")
+                    print(f"   📋 오류 상세: {str(chunk_error)}")
+                    
                     if len(text_chunks) == 1:
                         all_analyses.append(f"분석 실패\n\n오류: {chunk_error}")
+                        print(f"   📌 청크 {i} 실패 결과 저장 (제목 없음)")
                     else:
                         all_analyses.append(f"## 청크 {i} 분석 실패\n\n오류: {chunk_error}")
+                        print(f"   📌 청크 {i} 실패 결과 저장 (제목 포함)")
             
             # 모든 분석 결과 통합
+            print(f"📊 분석 결과 통합 시작... (총 {len(all_analyses)}개)")
             if len(text_chunks) == 1:
                 analysis_result = all_analyses[0]
+                print(f"   📌 단일 청크 결과 사용 (길이: {len(analysis_result)} 문자)")
             else:
                 analysis_result = "\n\n---\n\n".join(all_analyses)
+                print(f"   📌 다중 청크 결과 통합 (길이: {len(analysis_result)} 문자)")
             print("✅ 모든 청크 분석 완료 및 통합")
             
             # Groundedness Check는 전체 텍스트에 대해 수행
+            print(f"🔍 Groundedness Check 시작... (텍스트 길이: {len(contract_text)} 문자)")
             try:
-                groundedness_result = groundedness_checker.invoke({"text": contract_text})
+                print(f"   📋 Groundedness Check 입력 준비 중...")
+                # UpstageGroundednessCheckInput 형식에 맞게 입력 준비
+                groundedness_input = {
+                    "context": contract_text,  # 원본 계약서 텍스트
+                    "answer": analysis_result   # AI 분석 결과
+                }
+                print(f"   📋 입력 형식: context={len(contract_text)}자, answer={len(analysis_result)}자")
+                
+                groundedness_result = groundedness_checker.invoke(groundedness_input)
+                print(f"   ✅ Groundedness Check 성공!")
+                print(f"   📊 결과 타입: {type(groundedness_result)}")
+                if isinstance(groundedness_result, dict):
+                    print(f"   📋 결과 키: {list(groundedness_result.keys())}")
             except Exception as ge:
                 print(f"⚠️ Groundedness Check 실패: {ge}")
+                print(f"   🔍 오류 타입: {type(ge).__name__}")
+                print(f"   📋 오류 상세: {str(ge)}")
                 groundedness_result = None
         else:
             # 일반적인 분석 수행
@@ -1931,7 +1967,7 @@ def analyze_contract(file, progress=gr.Progress(track_tqdm=True)):
     if file is None:
         return "❌ 파일을 업로드해주세요.", "", "", ""
     try:
-        progress(0.1, desc="[🐢🐢🐢🐢🪄🪄🪄🪄🪄..")
+        progress(0.1, desc="🐢🐢🐢🐢🪄🪄🪄🪄🪄..")
         text, status = extract_text_from_file(file.name)
         if not text:
             return f"❌ 텍스트 추출 실패: {status}", "", "", ""
@@ -1942,7 +1978,7 @@ def analyze_contract(file, progress=gr.Progress(track_tqdm=True)):
         progress(0.7, desc="🐢🐢🐢🐢🪄🪄🪄🪄🪄.")
         ai_analysis = perform_ai_analysis(text)
 
-        progress(0.9, desc="[🐢🐢🐢🐢🪄🪄🪄🪄🪄...")
+        progress(0.9, desc="🐢🐢🐢🐢🪄🪄🪄🪄🪄...")
         md_report = generate_report(os.path.basename(file.name), rule_analysis, ai_analysis)
         html_report = render_report_html(os.path.basename(file.name), rule_analysis, ai_analysis)
 
