@@ -89,6 +89,7 @@ except:
 
 # API 엔드포인트
 TTS_API_URL = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={GOOGLE_API_KEY}" if GOOGLE_API_KEY else None
+STT_API_URL = f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_API_KEY}" if GOOGLE_API_KEY else None
 DEEPL_API_URL = "https://api-free.deepl.com/v2/translate"
 
 # 데이터 경로 설정
@@ -107,17 +108,17 @@ FONT_URLS = {
     # Noto Sans KR (한국어)
     "NotoSansKR-Regular.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf",
     "NotoSansKR-Bold.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Korean/NotoSansCJKkr-Bold.otf",
-    # Noto Sans JP (일본어)
+    # Noto Sans JP (일본어) - TTF 파일로 수정
     "NotoSansJP-Regular.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf",
     "NotoSansJP-Bold.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf",
-    # Noto Sans SC (중국어 간체)
+    # Noto Sans SC (중국어 간체) - TTF 파일로 수정
     "NotoSansSC-Regular.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
     "NotoSansSC-Bold.ttf": "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf"
 }
 
 def setup_fonts():
     """
-    필요한 다국어 폰트를 ./fonts 폴더에 자동으로 다운로드합니다.
+    필요한 다국어 폰트를 ./fonts 폴더에 자동으로 다운로드하고, OTF 파일을 TTF로 변환합니다.
     """
     print("🖋️ 다국어 폰트 설정을 시작합니다...")
     FONTS_DIR.mkdir(exist_ok=True)
@@ -152,6 +153,31 @@ def setup_fonts():
             print(f"  ❌ '{font_name}' 폰트 다운로드 실패: {e}")
             if font_path.exists():
                 font_path.unlink() # 실패 시 불완전한 파일 삭제
+    
+    # OTF 파일을 TTF로 변환 시도
+    print("  - OTF 파일을 TTF로 변환 시도 중...")
+    try:
+        from fontTools.ttLib import TTFont
+        from fontTools.ttx import makeOutputFileName
+        
+        for font_name in FONT_URLS.keys():
+            if font_name.endswith('.otf'):
+                otf_path = FONTS_DIR / font_name
+                ttf_name = font_name.replace('.otf', '.ttf')
+                ttf_path = FONTS_DIR / ttf_name
+                
+                if otf_path.exists() and not ttf_path.exists():
+                    try:
+                        print(f"    - '{font_name}' → '{ttf_name}' 변환 중...")
+                        font = TTFont(str(otf_path))
+                        font.save(str(ttf_path))
+                        print(f"    - '{ttf_name}' 변환 완료!")
+                    except Exception as e:
+                        print(f"    - '{font_name}' 변환 실패: {e}")
+    except ImportError:
+        print("    - fontTools가 설치되지 않아 OTF→TTF 변환을 건너뜁니다.")
+        print("    - pip install fonttools로 설치 가능합니다.")
+    
     print("✅ 모든 폰트 설정이 완료되었습니다.")
 
 
@@ -223,40 +249,51 @@ def get_multilingual_font(size=16, bold=False, lang_code='KO'):
     """
     style = "Bold" if bold else "Regular"
     
-    # 언어 코드에 따른 폰트 파일 매핑
+    # 언어 코드에 따른 폰트 파일 매핑 (TTF 우선, OTF 폴백)
     font_map = {
-        'KO': f'NotoSansKR-{style}.ttf',
-        'JA': f'NotoSansJP-{style}.ttf',
-        'ZH': f'NotoSansSC-{style}.ttf',
+        'KO': [f'NotoSansKR-{style}.ttf', f'NotoSansKR-{style}.otf'],
+        'JA': [f'NotoSansJP-{style}.ttf', f'NotoSansJP-{style}.otf'],
+        'ZH': [f'NotoSansSC-{style}.ttf', f'NotoSansSC-{style}.otf'],
         # 우크라이나어(키릴), 베트남어(라틴 확장) 등은 기본 NotoSans로 커버
-        'UK': f'NotoSans-{style}.ttf',
-        'VI': f'NotoSans-{style}.ttf',
-        'EN': f'NotoSans-{style}.ttf',
+        'UK': [f'NotoSans-{style}.ttf'],
+        'VI': [f'NotoSans-{style}.ttf'],
+        'EN': [f'NotoSans-{style}.ttf'],
     }
     
     # 요청된 언어의 폰트 파일명 가져오기, 없으면 기본 NotoSans 사용
-    font_filename = font_map.get(lang_code.upper(), f'NotoSans-{style}.ttf')
-    font_path = FONTS_DIR / font_filename
+    font_candidates = font_map.get(lang_code.upper(), [f'NotoSans-{style}.ttf'])
     
-    try:
+    # TTF 파일을 우선적으로 찾기
+    for font_filename in font_candidates:
+        font_path = FONTS_DIR / font_filename
         if font_path.exists():
-            return ImageFont.truetype(str(font_path), size)
-        else:
-            # 해당 폰트가 없으면 기본 레귤러 폰트라도 시도
-            fallback_path = FONTS_DIR / "NotoSans-Regular.ttf"
-            if fallback_path.exists():
-                print(f"⚠️ 경고: '{font_filename}'을 찾을 수 없어 'NotoSans-Regular.ttf'로 대체합니다.")
+            try:
+                return ImageFont.truetype(str(font_path), size)
+            except Exception as e:
+                print(f"⚠️ 폰트 로드 실패 '{font_filename}': {e}")
+                continue
+    
+    # 모든 후보 폰트가 실패한 경우 폴백 시도
+    fallback_candidates = [
+        FONTS_DIR / "NotoSans-Regular.ttf",
+        FONTS_DIR / "NotoSans-Regular.otf"
+    ]
+    
+    for fallback_path in fallback_candidates:
+        if fallback_path.exists():
+            try:
+                print(f"⚠️ 경고: 요청된 폰트를 찾을 수 없어 '{fallback_path.name}'로 대체합니다.")
                 return ImageFont.truetype(str(fallback_path), size)
-            else:
-                raise FileNotFoundError(f"요청된 폰트 '{font_filename}'와 폴백 폰트 모두 ./fonts 폴더에 없습니다.")
-
-    except Exception as e:
-        print(f"❌ 폰트 로드 실패: {e}. PIL 기본 폰트를 사용합니다. 글자가 깨질 수 있습니다.")
-        try:
-            # 정말 최후의 수단
-            return ImageFont.load_default()
-        except Exception:
-            return None
+            except Exception as e:
+                print(f"⚠️ 폴백 폰트 로드 실패 '{fallback_path.name}': {e}")
+                continue
+    
+    # 최후의 수단
+    print("❌ 모든 폰트 로드 실패. PIL 기본 폰트를 사용합니다. 글자가 깨질 수 있습니다.")
+    try:
+        return ImageFont.load_default()
+    except Exception:
+        return None
 
 
 def extract_text_from_file(file_path: str) -> tuple[str, str]:
@@ -386,7 +423,7 @@ def google_text_to_speech(text, lang_code="KO"):
                 # 메시지 개선
                 msg = "음성 생성 완료!"
                 if len(text_chunks) > 1:
-                    msg = f"음성 생성 완료 🎵 (긴 텍스트의 첫 부분만 변환)"
+                    msg = f"음성 생성 완료 🎵 "
                 return tmp_file.name, msg
         else:
             return None, f"TTS API 오류: {response.text}"
@@ -1719,6 +1756,8 @@ def create_interface():
                             with gr.Row():
                                 chat_image_download = gr.File(label="📁 답변 PNG", visible=True)
                                 chat_translate_image_download = gr.File(label="🗂️  번역 답변 PNG", visible=True)
+                        
+
                     
 
 
@@ -1804,16 +1843,15 @@ def create_interface():
             speech_text_to_use = report_md
 
             # 번역 옵션이 '원본'이 아닐 경우 번역을 먼저 시도
-            if lang != "한국어" and translate_lang != "원본":
-                lang_code_map = {"영어": "EN", "일본어": "JA", "중국어": "ZH", "우크라이나어": "UK", "베트남어": "VI"}
-                if lang_code_map.get(lang) == translate_lang:
-                     translated_output = deepl_translate_text(report_md, translate_lang)
-                     if "번역 오류" not in translated_output:
-                         speech_text_to_use = translated_output
+            if translate_lang != "원본":
+                lang_code_map = {"EN": "EN", "JA": "JA", "ZH": "ZH", "UK": "UK", "VI": "VI"}
+                if lang in lang_code_map:
+                    translated_output = deepl_translate_text(report_md, lang)
+                    if "번역 오류" not in translated_output:
+                        speech_text_to_use = translated_output
             
-            lang_code_map = {"한국어": "KO", "영어": "EN", "일본어": "JA", "중국어": "ZH", "우크라이나어": "UK", "베트남어": "VI"}
-            
-            return google_text_to_speech(speech_text_to_use, lang_code_map.get(lang, "KO"))
+            # 언어 코드를 직접 사용 (이미 올바른 형식)
+            return google_text_to_speech(speech_text_to_use, lang)
 
         def save_analysis_png(report_html):
             if not report_html:
@@ -1827,16 +1865,15 @@ def create_interface():
             speech_text_to_use = last_resp
 
             # 번역 옵션이 '원본'이 아닐 경우 번역을 먼저 시도
-            if lang != "한국어" and translate_lang != "원본":
-                lang_code_map = {"영어": "EN", "일본어": "JA", "중국어": "ZH", "우크라이나어": "UK", "베트남어": "VI"}
-                if lang_code_map.get(lang) == translate_lang:
-                     translated_output = deepl_translate_text(last_resp, translate_lang)
-                     if "번역 오류" not in translated_output:
-                         speech_text_to_use = translated_output
+            if translate_lang != "원본":
+                lang_code_map = {"EN": "EN", "JA": "JA", "ZH": "ZH", "UK": "UK", "VI": "VI"}
+                if lang in lang_code_map:
+                    translated_output = deepl_translate_text(last_resp, lang)
+                    if "번역 오류" not in translated_output:
+                        speech_text_to_use = translated_output
 
-            lang_code_map = {"한국어": "KO", "영어": "EN", "일본어": "JA", "중국어": "ZH", "우크라이나어": "UK", "베트남어": "VI"}
-            
-            return google_text_to_speech(speech_text_to_use, lang_code_map.get(lang, "KO"))
+            # 언어 코드를 직접 사용 (이미 올바른 형식)
+            return google_text_to_speech(speech_text_to_use, lang)
 
         def save_chat_png(last_resp):
             if not last_resp.strip():
